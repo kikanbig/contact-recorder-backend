@@ -6,6 +6,7 @@ const { Client } = require('pg');
 // Импорт роутов
 const authRoutes = require('./routes/auth');
 const locationsRoutes = require('./routes/locations');
+const recordingRoutes = require('./routes/recordings');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,6 +19,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Подключение роутов
 app.use('/api/auth', authRoutes);
 app.use('/api/locations', locationsRoutes);
+app.use('/api/recordings', recordingRoutes);
 
 // Основной endpoint
 app.get('/', (req, res) => {
@@ -86,4 +88,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('  POST /api/auth/login - Авторизация');
   console.log('  GET  /api/auth/me - Профиль пользователя');
   console.log('  GET  /api/locations - Список локаций');
+  console.log('  POST /api/recordings/upload - Загрузка записи');
+  console.log('  GET  /api/recordings - Список записей');
+  console.log('  GET  /api/recordings/stats - Статистика записей');
 });
