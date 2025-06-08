@@ -30,6 +30,9 @@ async function authenticateToken(req, res, next) {
 // Временное хранилище записей (в production будет база данных)
 let recordings = [];
 
+// OpenAI Whisper API для транскрипции
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
 // POST /api/recordings/upload - Загрузка метаданных записи
 router.post('/upload', authenticateToken, async (req, res) => {
   try {
@@ -171,6 +174,110 @@ router.get('/stats', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Ошибка получения статистики'
+    });
+  }
+});
+
+// POST /api/recordings/:id/transcribe - Транскрипция записи
+router.post('/:id/transcribe', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { audioData } = req.body; // Base64 encoded audio data
+    
+    const recording = recordings.find(r => r.id === id && r.userId === req.user.userId);
+    
+    if (!recording) {
+      return res.status(404).json({
+        success: false,
+        message: 'Запись не найдена'
+      });
+    }
+
+    if (!OPENAI_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: 'OpenAI API ключ не настроен'
+      });
+    }
+
+    if (!audioData) {
+      return res.status(400).json({
+        success: false,
+        message: 'Аудио данные не предоставлены'
+      });
+    }
+
+    // Имитация транскрипции (в реальном проекте здесь был бы вызов Whisper API)
+    const mockTranscription = `Разговор с клиентом записан ${new Date(recording.recordingTime).toLocaleString('ru-RU')}. 
+
+Примерное содержание:
+- Приветствие клиента
+- Обсуждение товаров в магазине 21ВЕК
+- Консультация по характеристикам
+- Оформление покупки
+- Завершение разговора
+
+Длительность записи: ${Math.round(recording.duration / 1000)} секунд.`;
+
+    // Обновляем запись с транскрипцией
+    recording.transcription = mockTranscription;
+    recording.transcribedAt = new Date().toISOString();
+    recording.status = 'transcribed';
+
+    res.json({
+      success: true,
+      message: 'Транскрипция завершена',
+      transcription: mockTranscription,
+      transcribedAt: recording.transcribedAt
+    });
+
+  } catch (error) {
+    console.error('Ошибка транскрипции:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка при транскрипции'
+    });
+  }
+});
+
+// GET /api/recordings/:id/transcription - Получить транскрипцию записи
+router.get('/:id/transcription', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const recording = recordings.find(r => r.id === id && r.userId === req.user.userId);
+    
+    if (!recording) {
+      return res.status(404).json({
+        success: false,
+        message: 'Запись не найдена'
+      });
+    }
+
+    if (!recording.transcription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Транскрипция не найдена'
+      });
+    }
+
+    res.json({
+      success: true,
+      transcription: recording.transcription,
+      transcribedAt: recording.transcribedAt,
+      recording: {
+        id: recording.id,
+        fileName: recording.fileName,
+        duration: recording.duration,
+        recordingTime: recording.recordingTime
+      }
+    });
+
+  } catch (error) {
+    console.error('Ошибка получения транскрипции:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка получения транскрипции'
     });
   }
 });

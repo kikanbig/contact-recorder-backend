@@ -91,4 +91,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('  POST /api/recordings/upload - Загрузка записи');
   console.log('  GET  /api/recordings - Список записей');
   console.log('  GET  /api/recordings/stats - Статистика записей');
+  console.log('  POST /api/recordings/:id/transcribe - Транскрипция записи');
+  console.log('  GET  /api/recordings/:id/transcription - Получить транскрипцию');
 });
