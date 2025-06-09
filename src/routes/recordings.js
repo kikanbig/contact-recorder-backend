@@ -1,8 +1,30 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+const { OpenAI } = require('openai');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'contact-recorder-secret-key';
+
+// OpenAI клиент для транскрипции
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+
+// Настройка multer для загрузки файлов
+const upload = multer({
+  dest: 'uploads/',
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['audio/mpeg', 'audio/mp4', 'audio/m4a', 'audio/wav', 'audio/webm'];
+    if (allowedTypes.includes(file.mimetype) || file.originalname.endsWith('.m4a')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Неподдерживаемый формат файла'), false);
+    }
+  }
+});
 
 // Middleware для проверки токена
 async function authenticateToken(req, res, next) {
@@ -29,9 +51,6 @@ async function authenticateToken(req, res, next) {
 
 // Временное хранилище записей (в production будет база данных)
 let recordings = [];
-
-// OpenAI Whisper API для транскрипции
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // POST /api/recordings/upload - Загрузка метаданных записи
 router.post('/upload', authenticateToken, async (req, res) => {
@@ -178,11 +197,92 @@ router.get('/stats', authenticateToken, async (req, res) => {
   }
 });
 
-// POST /api/recordings/:id/transcribe - Транскрипция записи
+// POST /api/recordings/transcribe - Транскрипция аудио через файл
+router.post('/transcribe', authenticateToken, upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Аудио файл не предоставлен'
+      });
+    }
+
+    if (!openai) {
+      return res.status(500).json({
+        success: false,
+        message: 'OpenAI API ключ не настроен'
+      });
+    }
+
+    const { userId, locationId, duration, recordingTime } = req.body;
+
+    console.log('📝 Начинаем транскрипцию файла:', req.file.originalname);
+    console.log('📊 Размер файла:', req.file.size, 'байт');
+
+    // Выполняем транскрипцию через OpenAI Whisper
+    const transcription = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(req.file.path),
+      model: 'whisper-1',
+      language: 'ru',
+      response_format: 'text'
+    });
+
+    console.log('✅ Транскрипция завершена:', transcription.substring(0, 100) + '...');
+
+    // Создаем запись в базе данных
+    const recording = {
+      id: Date.now().toString(),
+      userId: userId || req.user.userId,
+      fileName: req.file.originalname,
+      duration: parseInt(duration) || 0,
+      locationId: locationId || 'unknown',
+      recordingTime: recordingTime || new Date().toISOString(),
+      uploadedAt: new Date().toISOString(),
+      transcription: transcription,
+      transcribedAt: new Date().toISOString(),
+      status: 'transcribed'
+    };
+
+    recordings.push(recording);
+
+    // Удаляем временный файл
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error('Ошибка удаления временного файла:', err);
+    });
+
+    res.json({
+      success: true,
+      message: 'Транскрипция завершена успешно',
+      recording: {
+        id: recording.id,
+        transcription: recording.transcription,
+        transcribedAt: recording.transcribedAt,
+        duration: recording.duration
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Ошибка транскрипции:', error);
+    
+    // Удаляем временный файл при ошибке
+    if (req.file) {
+      fs.unlink(req.file.path, (err) => {
+        if (err) console.error('Ошибка удаления временного файла:', err);
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка при транскрипции',
+      error: error.message
+    });
+  }
+});
+
+// POST /api/recordings/:id/transcribe - Транскрипция существующей записи (совместимость)
 router.post('/:id/transcribe', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { audioData } = req.body; // Base64 encoded audio data
     
     const recording = recordings.find(r => r.id === id && r.userId === req.user.userId);
     
@@ -193,42 +293,18 @@ router.post('/:id/transcribe', authenticateToken, async (req, res) => {
       });
     }
 
-    if (!OPENAI_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        message: 'OpenAI API ключ не настроен'
+    if (recording.transcription) {
+      return res.json({
+        success: true,
+        message: 'Транскрипция уже существует',
+        transcription: recording.transcription,
+        transcribedAt: recording.transcribedAt
       });
     }
-
-    if (!audioData) {
-      return res.status(400).json({
-        success: false,
-        message: 'Аудио данные не предоставлены'
-      });
-    }
-
-    // Имитация транскрипции (в реальном проекте здесь был бы вызов Whisper API)
-    const mockTranscription = `Разговор с клиентом записан ${new Date(recording.recordingTime).toLocaleString('ru-RU')}. 
-
-Примерное содержание:
-- Приветствие клиента
-- Обсуждение товаров в магазине 21ВЕК
-- Консультация по характеристикам
-- Оформление покупки
-- Завершение разговора
-
-Длительность записи: ${Math.round(recording.duration / 1000)} секунд.`;
-
-    // Обновляем запись с транскрипцией
-    recording.transcription = mockTranscription;
-    recording.transcribedAt = new Date().toISOString();
-    recording.status = 'transcribed';
 
     res.json({
-      success: true,
-      message: 'Транскрипция завершена',
-      transcription: mockTranscription,
-      transcribedAt: recording.transcribedAt
+      success: false,
+      message: 'Для транскрипции используйте POST /api/recordings/transcribe с аудио файлом'
     });
 
   } catch (error) {
