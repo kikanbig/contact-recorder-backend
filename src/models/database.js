@@ -6,13 +6,36 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-  query_timeout: 10000
+  connectionTimeoutMillis: 20000,
+  query_timeout: 20000,
+  statement_timeout: 20000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000
 });
+
+// Функция для повторных попыток подключения
+async function connectWithRetry(maxRetries = 5, delay = 2000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      console.log(`🔄 Попытка подключения к БД ${i + 1}/${maxRetries}...`);
+      const client = await pool.connect();
+      console.log('✅ Подключение к БД успешно!');
+      return client;
+    } catch (error) {
+      console.error(`❌ Ошибка подключения к БД (попытка ${i + 1}):`, error.message);
+      if (i === maxRetries - 1) {
+        throw error;
+      }
+      console.log(`⏳ Ожидание ${delay}ms перед следующей попыткой...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay *= 1.5; // Увеличиваем задержку
+    }
+  }
+}
 
 // Инициализация таблиц базы данных
 async function initDatabase() {
-  const client = await pool.connect();
+  const client = await connectWithRetry();
   
   try {
     // Таблица пользователей (продавцов)
@@ -124,8 +147,15 @@ async function initDatabase() {
 // Функции для работы с базой данных
 const db = {
   // Общие функции
-  query: (text, params) => pool.query(text, params),
-  getClient: () => pool.connect(),
+  query: async (text, params) => {
+    try {
+      return await pool.query(text, params);
+    } catch (error) {
+      console.error('❌ Ошибка выполнения запроса:', error.message);
+      throw error;
+    }
+  },
+  getClient: () => connectWithRetry(),
   
   // Пользователи
   async createUser(userData) {

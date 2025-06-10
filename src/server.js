@@ -2,7 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { db, initDatabase } = require('./models/database');
+// Используем SQLite для устранения проблем с Railway PostgreSQL
+const { db, initDatabase } = process.env.USE_SQLITE ? 
+  require('./models/database-sqlite') : 
+  require('./models/database');
 
 // Импорт роутов
 const authRoutes = require('./routes/auth');
