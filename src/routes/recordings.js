@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const { OpenAI } = require('openai');
+const { db } = require('../models/database');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'contact-recorder-secret-key';
@@ -17,8 +18,8 @@ const upload = multer({
   dest: 'uploads/',
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['audio/mpeg', 'audio/mp4', 'audio/m4a', 'audio/wav', 'audio/webm'];
-    if (allowedTypes.includes(file.mimetype) || file.originalname.endsWith('.m4a')) {
+    const allowedTypes = ['audio/mpeg', 'audio/mp4', 'audio/m4a', 'audio/wav', 'audio/webm', 'audio/aac'];
+    if (allowedTypes.includes(file.mimetype) || file.originalname.match(/\.(m4a|mp3|wav|aac|webm)$/i)) {
       cb(null, true);
     } else {
       cb(new Error('Неподдерживаемый формат файла'), false);
@@ -39,7 +40,16 @@ async function authenticateToken(req, res, next) {
     }
 
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    const user = await db.getUserById(decoded.userId);
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Пользователь не найден'
+      });
+    }
+
+    req.user = user;
     next();
   } catch (error) {
     res.status(401).json({
@@ -49,79 +59,111 @@ async function authenticateToken(req, res, next) {
   }
 }
 
-// Временное хранилище записей (в production будет база данных)
-let recordings = [];
+// Middleware для проверки прав администратора
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Требуются права администратора'
+    });
+  }
+  next();
+}
 
-// POST /api/recordings/upload - Загрузка метаданных записи
-router.post('/upload', authenticateToken, async (req, res) => {
+// POST /api/recordings/upload - Загрузка аудио файла (для мобильного приложения)
+router.post('/upload', authenticateToken, upload.single('audio'), async (req, res) => {
   try {
-    const { 
-      fileName, 
-      duration, 
-      locationId, 
-      fileSize,
-      recordingTime 
-    } = req.body;
-
-    if (!fileName || !duration) {
+    if (!req.file) {
       return res.status(400).json({
         success: false,
-        message: 'Необходимы fileName и duration'
+        message: 'Аудио файл не предоставлен'
       });
     }
 
-    const recording = {
-      id: Date.now().toString(),
-      userId: req.user.userId,
-      fileName,
-      duration,
-      locationId,
-      fileSize,
-      recordingTime: recordingTime || new Date().toISOString(),
-      uploadedAt: new Date().toISOString(),
-      status: 'uploaded'
-    };
+    const { 
+      location_id, 
+      duration_seconds,
+      recording_date,
+      metadata
+    } = req.body;
 
-    recordings.push(recording);
+    console.log('📁 Загружаем аудио файл:', req.file.originalname);
+    console.log('📊 Размер файла:', req.file.size, 'байт');
+    console.log('👤 Пользователь:', req.user.username);
+    console.log('📍 Локация:', location_id);
+
+    // Читаем файл в base64 для хранения в PostgreSQL
+    const audioData = fs.readFileSync(req.file.path);
+
+    // Создаем запись в базе данных
+    const recording = await db.createRecording({
+      user_id: req.user.id,
+      location_id: location_id ? parseInt(location_id) : null,
+      filename: `${Date.now()}_${req.file.originalname}`,
+      original_filename: req.file.originalname,
+      file_path: req.file.path,
+      file_size: req.file.size,
+      duration_seconds: duration_seconds ? parseInt(duration_seconds) : null,
+      mime_type: req.file.mimetype,
+      audio_data: audioData,
+      recording_date: recording_date ? new Date(recording_date) : new Date(),
+      metadata: metadata ? JSON.parse(metadata) : null
+    });
+
+    // Удаляем временный файл
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error('Ошибка удаления временного файла:', err);
+    });
 
     res.json({
       success: true,
-      message: 'Запись успешно загружена',
+      message: 'Аудио файл успешно загружен',
       recording: {
         id: recording.id,
-        fileName: recording.fileName,
-        duration: recording.duration,
-        uploadedAt: recording.uploadedAt
+        filename: recording.filename,
+        duration_seconds: recording.duration_seconds,
+        file_size: recording.file_size,
+        uploaded_at: recording.uploaded_at,
+        status: recording.status
       }
     });
 
   } catch (error) {
-    console.error('Ошибка загрузки записи:', error);
+    console.error('Ошибка загрузки аудио:', error);
     res.status(500).json({
       success: false,
-      message: 'Ошибка загрузки записи'
+      message: 'Ошибка загрузки аудио файла'
     });
   }
 });
 
-// GET /api/recordings - Получить список записей пользователя
+// GET /api/recordings - Получить записи текущего пользователя
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const userRecordings = recordings.filter(r => r.userId === req.user.userId);
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    
+    const recordings = await db.getRecordingsByUser(req.user.id, limit, offset);
     
     res.json({
       success: true,
-      recordings: userRecordings.map(recording => ({
+      recordings: recordings.map(recording => ({
         id: recording.id,
-        fileName: recording.fileName,
-        duration: recording.duration,
-        locationId: recording.locationId,
-        fileSize: recording.fileSize,
-        recordingTime: recording.recordingTime,
-        uploadedAt: recording.uploadedAt,
-        status: recording.status
+        filename: recording.original_filename,
+        duration_seconds: recording.duration_seconds,
+        file_size: recording.file_size,
+        location_name: recording.location_name,
+        recording_date: recording.recording_date,
+        uploaded_at: recording.uploaded_at,
+        status: recording.status,
+        has_transcription: !!recording.transcription,
+        transcribed_at: recording.transcribed_at
       })),
-      total: userRecordings.length
+      pagination: {
+        limit,
+        offset,
+        has_more: recordings.length === limit
+      }
     });
 
   } catch (error) {
@@ -133,80 +175,156 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// DELETE /api/recordings/:id - Удалить запись
-router.delete('/:id', authenticateToken, async (req, res) => {
+// GET /api/recordings/admin - Получить все записи (только для администраторов)
+router.get('/admin', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = parseInt(req.query.offset) || 0;
     
-    const recordingIndex = recordings.findIndex(
-      r => r.id === id && r.userId === req.user.userId
-    );
+    const recordings = await db.getAllRecordings(limit, offset);
+    
+    res.json({
+      success: true,
+      recordings: recordings.map(recording => ({
+        id: recording.id,
+        filename: recording.original_filename,
+        duration_seconds: recording.duration_seconds,
+        file_size: recording.file_size,
+        user: {
+          id: recording.user_id,
+          username: recording.username,
+          full_name: recording.full_name
+        },
+        location: {
+          id: recording.location_id,
+          name: recording.location_name,
+          address: recording.location_address
+        },
+        recording_date: recording.recording_date,
+        uploaded_at: recording.uploaded_at,
+        status: recording.status,
+        has_transcription: !!recording.transcription,
+        transcribed_at: recording.transcribed_at,
+        transcription_preview: recording.transcription ? recording.transcription.substring(0, 100) + '...' : null
+      })),
+      pagination: {
+        limit,
+        offset,
+        has_more: recordings.length === limit
+      }
+    });
 
-    if (recordingIndex === -1) {
+  } catch (error) {
+    console.error('Ошибка получения записей для админа:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка получения записей'
+    });
+  }
+});
+
+// GET /api/recordings/:id - Получить конкретную запись
+router.get('/:id', authenticateToken, async (req, res) => {
+  try {
+    const recording = await db.getRecordingById(req.params.id);
+    
+    if (!recording) {
       return res.status(404).json({
         success: false,
         message: 'Запись не найдена'
       });
     }
 
-    recordings.splice(recordingIndex, 1);
-
-    res.json({
-      success: true,
-      message: 'Запись удалена'
-    });
-
-  } catch (error) {
-    console.error('Ошибка удаления записи:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Ошибка удаления записи'
-    });
-  }
-});
-
-// GET /api/recordings/stats - Статистика записей
-router.get('/stats', authenticateToken, async (req, res) => {
-  try {
-    const userRecordings = recordings.filter(r => r.userId === req.user.userId);
-    
-    const stats = {
-      totalRecordings: userRecordings.length,
-      totalDuration: userRecordings.reduce((sum, r) => sum + (r.duration || 0), 0),
-      averageDuration: userRecordings.length > 0 
-        ? userRecordings.reduce((sum, r) => sum + (r.duration || 0), 0) / userRecordings.length 
-        : 0,
-      recordingsToday: userRecordings.filter(r => {
-        const today = new Date().toDateString();
-        const recordingDate = new Date(r.recordingTime).toDateString();
-        return today === recordingDate;
-      }).length
-    };
-
-    res.json({
-      success: true,
-      stats
-    });
-
-  } catch (error) {
-    console.error('Ошибка получения статистики:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Ошибка получения статистики'
-    });
-  }
-});
-
-// POST /api/recordings/transcribe - Транскрипция аудио через файл
-router.post('/transcribe', authenticateToken, upload.single('audio'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({
+    // Проверяем права доступа
+    if (req.user.role !== 'admin' && recording.user_id !== req.user.id) {
+      return res.status(403).json({
         success: false,
-        message: 'Аудио файл не предоставлен'
+        message: 'Доступ запрещен'
       });
     }
 
+    res.json({
+      success: true,
+      recording: {
+        id: recording.id,
+        filename: recording.original_filename,
+        duration_seconds: recording.duration_seconds,
+        file_size: recording.file_size,
+        user: {
+          id: recording.user_id,
+          username: recording.username,
+          full_name: recording.full_name
+        },
+        location: {
+          id: recording.location_id,
+          name: recording.location_name,
+          address: recording.location_address
+        },
+        recording_date: recording.recording_date,
+        uploaded_at: recording.uploaded_at,
+        status: recording.status,
+        transcription: recording.transcription,
+        transcribed_at: recording.transcribed_at,
+        metadata: recording.metadata
+      }
+    });
+
+  } catch (error) {
+    console.error('Ошибка получения записи:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка получения записи'
+    });
+  }
+});
+
+// GET /api/recordings/:id/audio - Получить аудио файл
+router.get('/:id/audio', authenticateToken, async (req, res) => {
+  try {
+    const recording = await db.getRecordingById(req.params.id);
+    
+    if (!recording) {
+      return res.status(404).json({
+        success: false,
+        message: 'Запись не найдена'
+      });
+    }
+
+    // Проверяем права доступа
+    if (req.user.role !== 'admin' && recording.user_id !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Доступ запрещен'
+      });
+    }
+
+    if (!recording.audio_data) {
+      return res.status(404).json({
+        success: false,
+        message: 'Аудио данные не найдены'
+      });
+    }
+
+    res.set({
+      'Content-Type': recording.mime_type || 'audio/mpeg',
+      'Content-Length': recording.audio_data.length,
+      'Content-Disposition': `attachment; filename="${recording.original_filename}"`
+    });
+
+    res.send(recording.audio_data);
+
+  } catch (error) {
+    console.error('Ошибка получения аудио:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка получения аудио файла'
+    });
+  }
+});
+
+// POST /api/recordings/:id/transcribe - Транскрипция записи (только для администраторов)
+router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res) => {
+  try {
     if (!openai) {
       return res.status(500).json({
         success: false,
@@ -214,77 +332,7 @@ router.post('/transcribe', authenticateToken, upload.single('audio'), async (req
       });
     }
 
-    const { userId, locationId, duration, recordingTime } = req.body;
-
-    console.log('📝 Начинаем транскрипцию файла:', req.file.originalname);
-    console.log('📊 Размер файла:', req.file.size, 'байт');
-
-    // Выполняем транскрипцию через OpenAI Whisper
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(req.file.path),
-      model: 'whisper-1',
-      language: 'ru',
-      response_format: 'text'
-    });
-
-    console.log('✅ Транскрипция завершена:', transcription.substring(0, 100) + '...');
-
-    // Создаем запись в базе данных
-    const recording = {
-      id: Date.now().toString(),
-      userId: userId || req.user.userId,
-      fileName: req.file.originalname,
-      duration: parseInt(duration) || 0,
-      locationId: locationId || 'unknown',
-      recordingTime: recordingTime || new Date().toISOString(),
-      uploadedAt: new Date().toISOString(),
-      transcription: transcription,
-      transcribedAt: new Date().toISOString(),
-      status: 'transcribed'
-    };
-
-    recordings.push(recording);
-
-    // Удаляем временный файл
-    fs.unlink(req.file.path, (err) => {
-      if (err) console.error('Ошибка удаления временного файла:', err);
-    });
-
-    res.json({
-      success: true,
-      message: 'Транскрипция завершена успешно',
-      recording: {
-        id: recording.id,
-        transcription: recording.transcription,
-        transcribedAt: recording.transcribedAt,
-        duration: recording.duration
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Ошибка транскрипции:', error);
-    
-    // Удаляем временный файл при ошибке
-    if (req.file) {
-      fs.unlink(req.file.path, (err) => {
-        if (err) console.error('Ошибка удаления временного файла:', err);
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: 'Ошибка при транскрипции',
-      error: error.message
-    });
-  }
-});
-
-// POST /api/recordings/:id/transcribe - Транскрипция существующей записи (совместимость)
-router.post('/:id/transcribe', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const recording = recordings.find(r => r.id === id && r.userId === req.user.userId);
+    const recording = await db.getRecordingById(req.params.id);
     
     if (!recording) {
       return res.status(404).json({
@@ -296,64 +344,108 @@ router.post('/:id/transcribe', authenticateToken, async (req, res) => {
     if (recording.transcription) {
       return res.json({
         success: true,
-        message: 'Транскрипция уже существует',
+        message: 'Запись уже транскрибирована',
         transcription: recording.transcription,
-        transcribedAt: recording.transcribedAt
+        transcribed_at: recording.transcribed_at
       });
     }
 
-    res.json({
-      success: false,
-      message: 'Для транскрипции используйте POST /api/recordings/transcribe с аудио файлом'
-    });
+    if (!recording.audio_data) {
+      return res.status(400).json({
+        success: false,
+        message: 'Аудио данные не найдены'
+      });
+    }
+
+    console.log('📝 Начинаем транскрипцию записи ID:', req.params.id);
+
+    // Создаем временный файл для OpenAI API
+    const tempFilePath = path.join('uploads', `temp_${recording.id}_${Date.now()}.m4a`);
+    fs.writeFileSync(tempFilePath, recording.audio_data);
+
+    try {
+      // Выполняем транскрипцию через OpenAI Whisper
+      const transcription = await openai.audio.transcriptions.create({
+        file: fs.createReadStream(tempFilePath),
+        model: 'whisper-1',
+        language: 'ru',
+        response_format: 'text'
+      });
+
+      console.log('✅ Транскрипция завершена для записи ID:', req.params.id);
+
+      // Обновляем запись в базе данных
+      const updatedRecording = await db.updateRecordingTranscription(req.params.id, transcription);
+
+      // Удаляем временный файл
+      fs.unlink(tempFilePath, (err) => {
+        if (err) console.error('Ошибка удаления временного файла:', err);
+      });
+
+      res.json({
+        success: true,
+        message: 'Транскрипция завершена',
+        transcription: transcription,
+        transcribed_at: updatedRecording.transcribed_at
+      });
+
+    } catch (transcriptionError) {
+      // Удаляем временный файл в случае ошибки
+      fs.unlink(tempFilePath, (err) => {
+        if (err) console.error('Ошибка удаления временного файла:', err);
+      });
+      throw transcriptionError;
+    }
 
   } catch (error) {
     console.error('Ошибка транскрипции:', error);
     res.status(500).json({
       success: false,
-      message: 'Ошибка при транскрипции'
+      message: 'Ошибка выполнения транскрипции',
+      error: error.message
     });
   }
 });
 
-// GET /api/recordings/:id/transcription - Получить транскрипцию записи
-router.get('/:id/transcription', authenticateToken, async (req, res) => {
+// GET /api/recordings/stats - Статистика записей
+router.get('/stats', authenticateToken, async (req, res) => {
   try {
-    const { id } = req.params;
+    const stats = await db.getRecordingsStats();
     
-    const recording = recordings.find(r => r.id === id && r.userId === req.user.userId);
-    
-    if (!recording) {
-      return res.status(404).json({
-        success: false,
-        message: 'Запись не найдена'
-      });
-    }
-
-    if (!recording.transcription) {
-      return res.status(404).json({
-        success: false,
-        message: 'Транскрипция не найдена'
-      });
+    // Дополнительная статистика для администраторов
+    let userStats = null;
+    if (req.user.role === 'admin') {
+      userStats = stats;
+    } else {
+      // Статистика только для текущего пользователя
+      const userRecordings = await db.getRecordingsByUser(req.user.id, 1000, 0);
+      userStats = {
+        total_recordings: userRecordings.length,
+        transcribed_recordings: userRecordings.filter(r => r.transcription).length,
+        total_duration_seconds: userRecordings.reduce((sum, r) => sum + (r.duration_seconds || 0), 0),
+        avg_duration_seconds: userRecordings.length > 0 ? 
+          userRecordings.reduce((sum, r) => sum + (r.duration_seconds || 0), 0) / userRecordings.length : 0
+      };
     }
 
     res.json({
       success: true,
-      transcription: recording.transcription,
-      transcribedAt: recording.transcribedAt,
-      recording: {
-        id: recording.id,
-        fileName: recording.fileName,
-        duration: recording.duration,
-        recordingTime: recording.recordingTime
+      stats: {
+        total_recordings: parseInt(userStats.total_recordings),
+        transcribed_recordings: parseInt(userStats.transcribed_recordings),
+        pending_transcriptions: parseInt(userStats.total_recordings) - parseInt(userStats.transcribed_recordings),
+        unique_users: userStats.unique_users ? parseInt(userStats.unique_users) : null,
+        unique_locations: userStats.unique_locations ? parseInt(userStats.unique_locations) : null,
+        total_duration_seconds: parseInt(userStats.total_duration_seconds || 0),
+        avg_duration_seconds: Math.round(parseFloat(userStats.avg_duration_seconds || 0))
       }
     });
 
   } catch (error) {
-    console.error('Ошибка получения транскрипции:', error);
+    console.error('Ошибка получения статистики:', error);
     res.status(500).json({
       success: false,
-      message: 'Ошибка получения транскрипции'
+      message: 'Ошибка получения статистики'
     });
   }
 });

@@ -1,7 +1,8 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { Client } = require('pg');
+const { db, initDatabase } = require('./models/database');
 
 // Импорт роутов
 const authRoutes = require('./routes/auth');
@@ -16,6 +17,9 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Статические файлы для веб-панели
+app.use('/admin', express.static(path.join(__dirname, '../public')));
+
 // Подключение роутов
 app.use('/api/auth', authRoutes);
 app.use('/api/locations', locationsRoutes);
@@ -24,14 +28,18 @@ app.use('/api/recordings', recordingRoutes);
 // Основной endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'Contact Recorder API работает!',
-    version: '2.0.0',
+    message: 'Contact Recorder API v3.0 - Администраторская панель готова!',
+    version: '3.0.0',
     features: [
       'Авторизация пользователей',
-      'Управление локациями',
-      'Готов к работе'
+      'Управление локациями', 
+      'Загрузка аудиозаписей',
+      'Веб-панель администратора',
+      'Транскрипция через OpenAI',
+      'PostgreSQL база данных'
     ],
     status: 'active',
+    admin_panel: '/admin',
     timestamp: new Date().toISOString()
   });
 });
@@ -50,14 +58,7 @@ app.get('/health', (req, res) => {
 // Endpoint для тестирования подключения к БД
 app.get('/db-test', async (req, res) => {
   try {
-    const client = new Client({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-    });
-    
-    await client.connect();
-    const result = await client.query('SELECT NOW() as current_time, version() as postgres_version');
-    await client.end();
+    const result = await db.query('SELECT NOW() as current_time, version() as postgres_version');
     
     res.json({
       status: 'success',
@@ -76,22 +77,42 @@ app.get('/db-test', async (req, res) => {
   }
 });
 
+// Инициализация базы данных при запуске
+async function startServer() {
+  try {
+    console.log('🔄 Инициализация базы данных...');
+    await initDatabase();
+    
+    // Запуск сервера
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`📊 DATABASE_URL status: ${process.env.DATABASE_URL ? '✅ configured' : '❌ not configured'}`);
+      
+      console.log('\n📋 Available endpoints:');
+      console.log('  GET  / - API информация');
+      console.log('  GET  /health - Статус сервера');
+      console.log('  GET  /db-test - Тест базы данных');
+      console.log('  GET  /admin - Веб-панель администратора');
+      console.log('  POST /api/auth/login - Авторизация');
+      console.log('  GET  /api/auth/me - Профиль пользователя');
+      console.log('  GET  /api/locations - Список локаций');
+      console.log('  POST /api/recordings/upload - Загрузка записи');
+      console.log('  GET  /api/recordings - Список записей');
+      console.log('  GET  /api/recordings/admin - Все записи для админа');
+      console.log('  GET  /api/recordings/stats - Статистика записей');
+      console.log('  POST /api/recordings/:id/transcribe - Транскрипция записи');
+      console.log('  GET  /api/recordings/:id/transcription - Получить транскрипцию');
+      
+      console.log('\n🔐 Админский доступ:');
+      console.log('  Логин: admin');
+      console.log('  Пароль: admin123');
+    });
+    
+  } catch (error) {
+    console.error('❌ Ошибка запуска сервера:', error);
+    process.exit(1);
+  }
+}
+
 // Запуск сервера
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 DATABASE_URL status: ${process.env.DATABASE_URL ? '✅ configured' : '❌ not configured'}`);
-  
-  console.log('\n📋 Available endpoints:');
-  console.log('  GET  / - API информация');
-  console.log('  GET  /health - Статус сервера');
-  console.log('  GET  /db-test - Тест базы данных');
-  console.log('  POST /api/auth/login - Авторизация');
-  console.log('  GET  /api/auth/me - Профиль пользователя');
-  console.log('  GET  /api/locations - Список локаций');
-  console.log('  POST /api/recordings/upload - Загрузка записи');
-  console.log('  GET  /api/recordings - Список записей');
-  console.log('  GET  /api/recordings/stats - Статистика записей');
-  console.log('  POST /api/recordings/transcribe - Транскрипция аудио файла (OpenAI Whisper)');
-  console.log('  POST /api/recordings/:id/transcribe - Транскрипция записи');
-  console.log('  GET  /api/recordings/:id/transcription - Получить транскрипцию');
-});
+startServer();
