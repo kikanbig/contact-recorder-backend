@@ -4,13 +4,14 @@ const { Client, Pool } = require('pg');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  max: 20,
+  max: 10,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 20000,
-  query_timeout: 20000,
-  statement_timeout: 20000,
+  connectionTimeoutMillis: 30000,
+  query_timeout: 30000,
+  statement_timeout: 30000,
   keepAlive: true,
-  keepAliveInitialDelayMillis: 10000
+  keepAliveInitialDelayMillis: 5000,
+  application_name: 'contact_recorder_backend'
 });
 
 // Функция для повторных попыток подключения
