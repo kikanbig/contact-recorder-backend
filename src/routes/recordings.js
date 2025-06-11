@@ -399,10 +399,68 @@ router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res)
 
   } catch (error) {
     console.error('Ошибка транскрипции:', error);
+    
+    // Определяем тип ошибки OpenAI для пользователя
+    let userMessage = 'Ошибка выполнения транскрипции';
+    
+    if (error.message.includes('429')) {
+      userMessage = 'Исчерпан лимит OpenAI API. Пополните баланс аккаунта OpenAI для продолжения транскрипции.';
+    } else if (error.message.includes('401')) {
+      userMessage = 'Неверный API ключ OpenAI. Проверьте настройки.';
+    } else if (error.message.includes('quota')) {
+      userMessage = 'Превышена квота OpenAI API. Пополните баланс или дождитесь обновления лимитов.';
+    } else if (error.message.includes('billing')) {
+      userMessage = 'Проблема с оплатой OpenAI API. Проверьте биллинг в аккаунте OpenAI.';
+    } else if (error.message.includes('rate limit')) {
+      userMessage = 'Превышен лимит запросов. Повторите попытку через несколько минут.';
+    }
+    
     res.status(500).json({
       success: false,
-      message: 'Ошибка выполнения транскрипции',
-      error: error.message
+      message: userMessage,
+      technical_error: error.message
+    });
+  }
+});
+
+// POST /api/recordings/:id/transcribe-text - Сохранение готовой транскрипции (только для администраторов)
+router.post('/:id/transcribe-text', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { transcription } = req.body;
+
+    if (!transcription || typeof transcription !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Текст транскрипции не предоставлен'
+      });
+    }
+
+    const recording = await db.getRecordingById(req.params.id);
+    
+    if (!recording) {
+      return res.status(404).json({
+        success: false,
+        message: 'Запись не найдена'
+      });
+    }
+
+    console.log('💾 Сохраняем браузерную транскрипцию для записи ID:', req.params.id);
+
+    // Обновляем запись в базе данных
+    const updatedRecording = await db.updateRecordingTranscription(req.params.id, transcription.trim());
+
+    res.json({
+      success: true,
+      message: 'Транскрипция сохранена',
+      transcription: transcription.trim(),
+      transcribed_at: updatedRecording.transcribed_at
+    });
+
+  } catch (error) {
+    console.error('Ошибка сохранения транскрипции:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка сохранения транскрипции'
     });
   }
 });
