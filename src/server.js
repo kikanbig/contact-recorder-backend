@@ -32,7 +32,7 @@ app.use('/api/recordings', recordingRoutes);
 app.get('/', (req, res) => {
   res.json({
     message: 'Contact Recorder API v3.0 - Администраторская панель готова!',
-    version: '3.0.0',
+    version: '3.0.2-FORCED',
     features: [
       'Авторизация пользователей',
       'Управление локациями', 
