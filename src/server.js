@@ -2,10 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-// Используем SQLite для устранения проблем с Railway PostgreSQL
-const { db, initDatabase } = process.env.USE_SQLITE ? 
-  require('./models/database-sqlite') : 
-  require('./models/database');
+const { db, initDatabase } = require('./models/database');
 
 // Импорт роутов
 const authRoutes = require('./routes/auth');
@@ -32,7 +29,7 @@ app.use('/api/recordings', recordingRoutes);
 app.get('/', (req, res) => {
   res.json({
     message: 'Contact Recorder API v3.0 - Администраторская панель готова!',
-    version: '3.0.2-FORCED',
+    version: '3.0.3',
     features: [
       'Авторизация пользователей',
       'Управление локациями', 
