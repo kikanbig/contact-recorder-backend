@@ -6,8 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
-    "postinstall": "python3 -m pip install --user -r requirements.txt || echo 'Warning: Python requirements installation failed'"
+    "dev": "nodemon src/server.js"
   },
   "engines": {
     "node": ">=16.0.0"

@@ -357,8 +357,8 @@ router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res)
     fs.writeFileSync(tempFilePath, recording.audio_data);
 
     try {
-      // Выполняем транскрипцию через локальный Whisper
-      const transcription = await transcribeWithLocalWhisper(tempFilePath);
+          // Выполняем транскрипцию через локальный Whisper
+    const transcription = await transcribeWithLocalWhisper(tempFilePath);
 
       console.log('✅ Локальная транскрипция завершена для записи ID:', req.params.id);
 
