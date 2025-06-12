@@ -325,13 +325,6 @@ router.get('/:id/audio', authenticateToken, async (req, res) => {
 // POST /api/recordings/:id/transcribe - Транскрипция записи (только для администраторов)
 router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    if (!openai) {
-      return res.status(500).json({
-        success: false,
-        message: 'OpenAI API ключ не настроен'
-      });
-    }
-
     const recording = await db.getRecordingById(req.params.id);
     
     if (!recording) {
@@ -357,22 +350,17 @@ router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res)
       });
     }
 
-    console.log('📝 Начинаем транскрипцию записи ID:', req.params.id);
+    console.log('📝 Начинаем локальную транскрипцию записи ID:', req.params.id);
 
-    // Создаем временный файл для OpenAI API
+    // Создаем временный файл для Whisper
     const tempFilePath = path.join('uploads', `temp_${recording.id}_${Date.now()}.m4a`);
     fs.writeFileSync(tempFilePath, recording.audio_data);
 
     try {
-      // Выполняем транскрипцию через OpenAI Whisper
-      const transcription = await openai.audio.transcriptions.create({
-        file: fs.createReadStream(tempFilePath),
-        model: 'whisper-1',
-        language: 'ru',
-        response_format: 'text'
-      });
+      // Выполняем транскрипцию через локальный Whisper
+      const transcription = await transcribeWithLocalWhisper(tempFilePath);
 
-      console.log('✅ Транскрипция завершена для записи ID:', req.params.id);
+      console.log('✅ Локальная транскрипция завершена для записи ID:', req.params.id);
 
       // Обновляем запись в базе данных
       const updatedRecording = await db.updateRecordingTranscription(req.params.id, transcription);
@@ -384,7 +372,7 @@ router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res)
 
       res.json({
         success: true,
-        message: 'Транскрипция завершена',
+        message: 'Локальная транскрипция завершена',
         transcription: transcription,
         transcribed_at: updatedRecording.transcribed_at
       });
@@ -398,21 +386,19 @@ router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res)
     }
 
   } catch (error) {
-    console.error('Ошибка транскрипции:', error);
+    console.error('Ошибка локальной транскрипции:', error);
     
-    // Определяем тип ошибки OpenAI для пользователя
-    let userMessage = 'Ошибка выполнения транскрипции';
+    // Определяем тип ошибки для пользователя
+    let userMessage = 'Ошибка выполнения локальной транскрипции';
     
-    if (error.message.includes('429')) {
-      userMessage = 'Исчерпан лимит OpenAI API. Пополните баланс аккаунта OpenAI для продолжения транскрипции.';
-    } else if (error.message.includes('401')) {
-      userMessage = 'Неверный API ключ OpenAI. Проверьте настройки.';
-    } else if (error.message.includes('quota')) {
-      userMessage = 'Превышена квота OpenAI API. Пополните баланс или дождитесь обновления лимитов.';
-    } else if (error.message.includes('billing')) {
-      userMessage = 'Проблема с оплатой OpenAI API. Проверьте биллинг в аккаунте OpenAI.';
-    } else if (error.message.includes('rate limit')) {
-      userMessage = 'Превышен лимит запросов. Повторите попытку через несколько минут.';
+    if (error.message.includes('python')) {
+      userMessage = 'Python не найден на сервере. Обратитесь к администратору.';
+    } else if (error.message.includes('whisper')) {
+      userMessage = 'Whisper не установлен. Обратитесь к администратору.';
+    } else if (error.message.includes('ffmpeg')) {
+      userMessage = 'FFmpeg не найден на сервере. Обратитесь к администратору.';
+    } else if (error.message.includes('memory') || error.message.includes('CUDA')) {
+      userMessage = 'Недостаточно ресурсов сервера для транскрипции. Попробуйте позже.';
     }
     
     res.status(500).json({
@@ -422,6 +408,62 @@ router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res)
     });
   }
 });
+
+// Функция для вызова локального Whisper
+async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelSize = 'base') {
+  return new Promise((resolve, reject) => {
+    const { spawn } = require('child_process');
+    
+    // Вызываем Python скрипт для транскрипции
+    const pythonProcess = spawn('python3', [
+      path.join(__dirname, '..', '..', 'transcription_service.py'),
+      audioFilePath,
+      language,
+      modelSize
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        console.error('❌ Ошибка Python процесса:', stderr);
+        reject(new Error(`Python процесс завершился с кодом ${code}: ${stderr}`));
+        return;
+      }
+
+      try {
+        // Парсим JSON ответ от Python скрипта
+        const result = JSON.parse(stdout.trim());
+        
+        if (result.success) {
+          resolve(result.text);
+        } else {
+          reject(new Error(result.error || 'Неизвестная ошибка транскрипции'));
+        }
+      } catch (parseError) {
+        console.error('❌ Ошибка парсинга ответа:', parseError);
+        console.error('Вывод Python:', stdout);
+        reject(new Error(`Ошибка парсинга ответа от Whisper: ${parseError.message}`));
+      }
+    });
+
+    pythonProcess.on('error', (error) => {
+      console.error('❌ Ошибка запуска Python:', error);
+      reject(new Error(`Ошибка запуска Python: ${error.message}`));
+    });
+  });
+}
 
 // POST /api/recordings/:id/transcribe-text - Сохранение готовой транскрипции (только для администраторов)
 router.post('/:id/transcribe-text', authenticateToken, requireAdmin, async (req, res) => {
