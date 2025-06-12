@@ -178,6 +178,19 @@
             font-size: 12px;
         }
 
+        .btn-info {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-info:hover {
+            background: #2563eb;
+        }
+
+        .diagnostic-controls {
+            margin-top: 10px;
+        }
+
         .form-group {
             margin-bottom: 20px;
         }
@@ -342,6 +355,7 @@
             <h1>🎯 21 Век - Панель администратора</h1>
             <div class="user-info">
                 <span id="userInfo"></span>
+                <button onclick="checkSystemStatus()" class="btn btn-info" style="margin-right: 10px;">🔍 Диагностика</button>
                 <button id="logoutBtn" class="btn btn-secondary">Выйти</button>
             </div>
         </div>
@@ -931,6 +945,78 @@
         function formatDate(dateString) {
             if (!dateString) return 'N/A';
             return new Date(dateString).toLocaleString('ru-RU');
+        }
+
+        // Диагностика системы
+        async function checkSystemStatus() {
+            if (!confirm('Запустить диагностику системы?\n\nПроверим наличие Python, Whisper, FFmpeg и других компонентов.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/recordings/system-check', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    const diag = data.diagnostics;
+                    let report = '🔍 ДИАГНОСТИКА СИСТЕМЫ\n';
+                    report += '='.repeat(40) + '\n\n';
+                    
+                    report += `⏰ Время проверки: ${new Date(diag.timestamp).toLocaleString('ru-RU')}\n\n`;
+                    
+                    // Python
+                    report += `🐍 Python:\n`;
+                    report += `   Статус: ${diag.python.available ? '✅ Доступен' : '❌ Недоступен'}\n`;
+                    if (diag.python.version) report += `   Версия: ${diag.python.version}\n`;
+                    if (diag.python.error) report += `   Ошибка: ${diag.python.error}\n`;
+                    report += '\n';
+                    
+                    // Whisper
+                    report += `🤖 Whisper:\n`;
+                    report += `   Статус: ${diag.whisper.available ? '✅ Установлен' : '❌ Не установлен'}\n`;
+                    if (diag.whisper.version) report += `   Версия: ${diag.whisper.version}\n`;
+                    if (diag.whisper.error) report += `   Ошибка: ${diag.whisper.error}\n`;
+                    report += '\n';
+                    
+                    // FFmpeg
+                    report += `🎵 FFmpeg:\n`;
+                    report += `   Статус: ${diag.ffmpeg.available ? '✅ Доступен' : '❌ Недоступен'}\n`;
+                    if (diag.ffmpeg.version) report += `   Версия: ${diag.ffmpeg.version.substring(0, 50)}...\n`;
+                    if (diag.ffmpeg.error) report += `   Ошибка: ${diag.ffmpeg.error}\n`;
+                    report += '\n';
+                    
+                    // Скрипт транскрипции
+                    report += `📜 Скрипт транскрипции:\n`;
+                    report += `   Статус: ${diag.transcription_script.exists ? '✅ Найден' : '❌ Не найден'}\n`;
+                    if (diag.transcription_script.path) report += `   Путь: ${diag.transcription_script.path}\n`;
+                    if (diag.transcription_script.error) report += `   Ошибка: ${diag.transcription_script.error}\n`;
+                    report += '\n';
+                    
+                    // Общий статус
+                    const allGood = diag.python.available && diag.whisper.available && diag.ffmpeg.available && diag.transcription_script.exists;
+                    report += `🎯 Общий статус: ${allGood ? '✅ ВСЁ ГОТОВО ДЛЯ ТРАНСКРИПЦИИ' : '❌ ТРЕБУЕТСЯ НАСТРОЙКА'}\n`;
+                    
+                    if (!allGood) {
+                        report += '\n📋 РЕКОМЕНДАЦИИ:\n';
+                        if (!diag.python.available) report += '• Установите Python 3.8-3.11 на сервер\n';
+                        if (!diag.whisper.available) report += '• Установите Whisper: pip install openai-whisper\n';
+                        if (!diag.ffmpeg.available) report += '• Установите FFmpeg\n';
+                        if (!diag.transcription_script.exists) report += '• Проверьте наличие transcription_service.py\n';
+                    }
+
+                    alert(report);
+                } else {
+                    alert('Ошибка диагностики: ' + data.message);
+                }
+            } catch (error) {
+                alert('Ошибка подключения к серверу диагностики');
+                console.error('Ошибка диагностики:', error);
+            }
         }
 
         // Закрытие модального окна по клику вне его
