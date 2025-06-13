@@ -24,12 +24,12 @@ def transcribe_audio(audio_data, language='ru', model_size='base'):
         dict: {'success': bool, 'text': str, 'error': str}
     """
     try:
-        print(f"🤖 Загружаем модель Whisper: {model_size}")
+        print(f"🤖 Загружаем модель Whisper: {model_size}", file=sys.stderr)
         
         # Загружаем модель Whisper (скачается автоматически при первом запуске)
         model = whisper.load_model(model_size)
         
-        print(f"✅ Модель {model_size} загружена")
+        print(f"✅ Модель {model_size} загружена", file=sys.stderr)
         
         # Создаем временный файл для аудио
         with tempfile.NamedTemporaryFile(suffix='.m4a', delete=False) as temp_file:
@@ -37,7 +37,7 @@ def transcribe_audio(audio_data, language='ru', model_size='base'):
             temp_path = temp_file.name
         
         try:
-            print(f"🎵 Транскрибируем аудио файл: {temp_path}")
+            print(f"🎵 Транскрибируем аудио файл: {temp_path}", file=sys.stderr)
             
             # Выполняем транскрипцию
             result = model.transcribe(
@@ -49,15 +49,16 @@ def transcribe_audio(audio_data, language='ru', model_size='base'):
             
             transcription_text = result['text'].strip()
             
-            print(f"✅ Транскрипция завершена: {len(transcription_text)} символов")
+            print(f"✅ Транскрипция завершена: {len(transcription_text)} символов", file=sys.stderr)
             
-            return {
+            print(json.dumps({
                 'success': True,
                 'text': transcription_text,
                 'language': result.get('language', language),
                 'error': None
-            }
-            
+            }))
+            return
+        
         finally:
             # Удаляем временный файл
             try:
@@ -67,13 +68,13 @@ def transcribe_audio(audio_data, language='ru', model_size='base'):
                 
     except Exception as e:
         error_message = str(e)
-        print(f"❌ Ошибка транскрипции: {error_message}")
-        
-        return {
+        print(f"❌ Ошибка транскрипции: {error_message}", file=sys.stderr)
+        print(json.dumps({
             'success': False,
             'text': '',
             'error': error_message
-        }
+        }))
+        return
 
 def main():
     """
