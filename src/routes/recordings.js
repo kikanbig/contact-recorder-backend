@@ -350,15 +350,17 @@ router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res)
       });
     }
 
-    console.log('📝 Начинаем локальную транскрипцию записи ID:', req.params.id);
+    // Получаем модель Whisper из request body (по умолчанию small)
+    const selectedModel = req.body?.model || 'small';
+    console.log('📝 Начинаем локальную транскрипцию записи ID:', req.params.id, 'модель:', selectedModel);
 
     // Создаем временный файл для Whisper
     const tempFilePath = path.join('uploads', `temp_${recording.id}_${Date.now()}.m4a`);
     fs.writeFileSync(tempFilePath, recording.audio_data);
 
     try {
-          // Выполняем транскрипцию через локальный Whisper
-    const transcription = await transcribeWithLocalWhisper(tempFilePath);
+          // Выполняем транскрипцию через локальный Whisper с выбранной моделью
+    const transcription = await transcribeWithLocalWhisper(tempFilePath, 'ru', selectedModel);
 
       console.log('✅ Локальная транскрипция завершена для записи ID:', req.params.id);
 
@@ -561,7 +563,7 @@ router.get('/system-check', authenticateToken, requireAdmin, async (req, res) =>
 });
 
 // Функция для вызова локального Whisper
-async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelSize = 'base') {
+async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelSize = 'small') {
   return new Promise((resolve, reject) => {
     const { spawn } = require('child_process');
     

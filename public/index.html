@@ -896,6 +896,111 @@
             }
         }
 
+        // Транскрипция с выбором модели Whisper
+        async function transcribeRecordingWithModel(id) {
+            const modelSelect = document.getElementById('whisperModelSelect');
+            const selectedModel = modelSelect ? modelSelect.value : 'small';
+            
+            const modelDescriptions = {
+                'tiny': 'tiny (39M параметров, быстро, базовое качество)',
+                'base': 'base (74M параметров, хорошее качество)', 
+                'small': 'small (244M параметров, рекомендуется для русского)',
+                'medium': 'medium (769M параметров, отличное качество)',
+                'large': 'large (1550M параметров, максимальное качество)'
+            };
+            
+            if (!confirm(`Начать транскрипцию записи?\n\n🤖 Модель: ${modelDescriptions[selectedModel]}\n\nЭто может занять несколько минут.`)) {
+                return;
+            }
+
+            try {
+                const button = event.target;
+                button.disabled = true;
+                button.textContent = 'Транскрибируется...';
+
+                const response = await fetch(`/api/recordings/${id}/transcribe`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: selectedModel
+                    })
+                });
+
+                // Проверяем статус ответа
+                if (!response.ok) {
+                    console.error('HTTP Error:', response.status, response.statusText);
+                    
+                    // Пробуем прочитать как текст в случае ошибки
+                    let errorText;
+                    try {
+                        errorText = await response.text();
+                        console.error('Error response body:', errorText);
+                    } catch (e) {
+                        errorText = 'Не удалось прочитать ответ сервера';
+                    }
+                    
+                    alert(`Ошибка HTTP ${response.status}: ${response.statusText}\n\nОтвет сервера:\n${errorText.substring(0, 500)}`);
+                    return;
+                }
+
+                // Получаем сырой текст ответа для диагностики
+                const responseText = await response.text();
+                console.log('Raw response text:', responseText);
+
+                // Пробуем парсить JSON
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (parseError) {
+                    console.error('JSON Parse Error:', parseError);
+                    console.error('Failed to parse response:', responseText);
+                    
+                    alert(`Ошибка парсинга ответа сервера!\n\n` +
+                          `Ожидался JSON, получен:\n${responseText.substring(0, 300)}...\n\n` +
+                          `Ошибка парсинга: ${parseError.message}`);
+                    return;
+                }
+
+                if (data.success) {
+                    // Получаем обновлённую запись и показываем модалку с транскрипцией
+                    const recResponse = await fetch(`/api/recordings/${id}`, {
+                        headers: {
+                            'Authorization': `Bearer ${authToken}`
+                        }
+                    });
+                    const recData = await recResponse.json();
+                    if (recData.success) {
+                        showRecordingModal(recData.recording);
+                    } else {
+                        alert('Транскрипция завершена, но не удалось получить запись.');
+                    }
+                    loadRecordings();
+                    loadStats();
+                } else {
+                    // Показываем детальную ошибку пользователю
+                    let errorMessage = data.message || 'Неизвестная ошибка';
+                    if (data.technical_error) {
+                        errorMessage += '\n\nТехническая информация: ' + data.technical_error;
+                    }
+                    
+                    console.error('Transcription failed:', data);
+                    alert('Ошибка транскрипции:\n\n' + errorMessage);
+                }
+            } catch (error) {
+                console.error('Network/General Error:', error);
+                alert('Ошибка подключения к серверу:\n\n' + error.message);
+            } finally {
+                const button = event.target;
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = 'Начать транскрипцию';
+                }
+            }
+        }
+
         function showRecordingModal(recording) {
             const modal = document.getElementById('recordingModal');
             const details = document.getElementById('recordingDetails');
@@ -930,7 +1035,19 @@
                 ` : `
                     <div style="text-align: center; padding: 20px;">
                         <p style="color: #64748b; margin-bottom: 20px;">Транскрипция не выполнена</p>
-                        <button class="btn btn-primary" onclick="transcribeRecording(${recording.id})">
+                        
+                        <div style="margin-bottom: 15px;">
+                            <label for="whisperModelSelect" style="display: block; margin-bottom: 5px; color: var(--color-text);">Модель Whisper:</label>
+                            <select id="whisperModelSelect" style="padding: 8px; border-radius: 4px; background: var(--bg-secondary); color: var(--color-text); border: 1px solid var(--border); margin-bottom: 10px;">
+                                <option value="tiny">tiny (39M) - Быстро, базовое качество</option>
+                                <option value="base">base (74M) - Хорошее качество</option>
+                                <option value="small" selected>small (244M) - Рекомендуется для русского</option>
+                                <option value="medium">medium (769M) - Отличное качество</option>
+                                <option value="large">large (1550M) - Максимальное качество</option>
+                            </select>
+                        </div>
+                        
+                        <button class="btn btn-primary" onclick="transcribeRecordingWithModel(${recording.id})">
                             Начать транскрипцию
                         </button>
                     </div>

@@ -11,7 +11,7 @@ import whisper
 import tempfile
 from pathlib import Path
 
-def transcribe_audio(audio_data, language='ru', model_size='base'):
+def transcribe_audio(audio_data, language='ru', model_size='small'):
     """
     Транскрибирует аудио данные через локальный Whisper
     
@@ -88,7 +88,7 @@ def main():
     
     audio_file_path = sys.argv[1]
     language = sys.argv[2] if len(sys.argv) > 2 else 'ru'
-    model_size = sys.argv[3] if len(sys.argv) > 3 else 'base'
+    model_size = sys.argv[3] if len(sys.argv) > 3 else 'small'
     
     try:
         print(f"📂 Читаем аудио файл: {audio_file_path}", file=sys.stderr)
