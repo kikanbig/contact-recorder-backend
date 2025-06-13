@@ -51,13 +51,12 @@ def transcribe_audio(audio_data, language='ru', model_size='base'):
             
             print(f"✅ Транскрипция завершена: {len(transcription_text)} символов", file=sys.stderr)
             
-            print(json.dumps({
+            return {
                 'success': True,
                 'text': transcription_text,
                 'language': result.get('language', language),
                 'error': None
-            }))
-            return
+            }
         
         finally:
             # Удаляем временный файл
@@ -69,12 +68,11 @@ def transcribe_audio(audio_data, language='ru', model_size='base'):
     except Exception as e:
         error_message = str(e)
         print(f"❌ Ошибка транскрипции: {error_message}", file=sys.stderr)
-        print(json.dumps({
+        return {
             'success': False,
             'text': '',
             'error': error_message
-        }))
-        return
+        }
 
 def main():
     """
@@ -85,7 +83,7 @@ def main():
         print(json.dumps({
             'success': False,
             'error': 'Не указан путь к аудио файлу'
-        }))
+        }, ensure_ascii=False))
         sys.exit(1)
     
     audio_file_path = sys.argv[1]
@@ -93,14 +91,18 @@ def main():
     model_size = sys.argv[3] if len(sys.argv) > 3 else 'base'
     
     try:
+        print(f"📂 Читаем аудио файл: {audio_file_path}", file=sys.stderr)
+        
         # Читаем аудио файл
         with open(audio_file_path, 'rb') as f:
             audio_data = f.read()
         
+        print(f"📦 Размер аудио файла: {len(audio_data)} байт", file=sys.stderr)
+        
         # Транскрибируем
         result = transcribe_audio(audio_data, language, model_size)
         
-        # Выводим результат в JSON формате для Node.js
+        # Выводим результат в JSON формате для Node.js (только в stdout)
         print(json.dumps(result, ensure_ascii=False))
         
     except Exception as e:
