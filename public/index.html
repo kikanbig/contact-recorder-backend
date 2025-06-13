@@ -783,7 +783,40 @@
                     }
                 });
 
-                const data = await response.json();
+                // Проверяем статус ответа
+                if (!response.ok) {
+                    console.error('HTTP Error:', response.status, response.statusText);
+                    
+                    // Пробуем прочитать как текст в случае ошибки
+                    let errorText;
+                    try {
+                        errorText = await response.text();
+                        console.error('Error response body:', errorText);
+                    } catch (e) {
+                        errorText = 'Не удалось прочитать ответ сервера';
+                    }
+                    
+                    alert(`Ошибка HTTP ${response.status}: ${response.statusText}\n\nОтвет сервера:\n${errorText.substring(0, 500)}`);
+                    return;
+                }
+
+                // Получаем сырой текст ответа для диагностики
+                const responseText = await response.text();
+                console.log('Raw response text:', responseText);
+
+                // Пробуем парсить JSON
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (parseError) {
+                    console.error('JSON Parse Error:', parseError);
+                    console.error('Failed to parse response:', responseText);
+                    
+                    alert(`Ошибка парсинга ответа сервера!\n\n` +
+                          `Ожидался JSON, получен:\n${responseText.substring(0, 300)}...\n\n` +
+                          `Ошибка парсинга: ${parseError.message}`);
+                    return;
+                }
 
                 if (data.success) {
                     // Получаем обновлённую запись и показываем модалку с транскрипцией
@@ -806,14 +839,19 @@
                     if (data.technical_error) {
                         errorMessage += '\n\nТехническая информация: ' + data.technical_error;
                     }
+                    
+                    console.error('Transcription failed:', data);
                     alert('Ошибка транскрипции:\n\n' + errorMessage);
                 }
             } catch (error) {
-                alert('Ошибка подключения к серверу');
-                console.error('Ошибка транскрипции:', error);
+                console.error('Network/General Error:', error);
+                alert('Ошибка подключения к серверу:\n\n' + error.message);
             } finally {
-                button.disabled = false;
-                button.textContent = 'Транскрибировать';
+                const button = event.target;
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = 'Транскрибировать';
+                }
             }
         }
 
