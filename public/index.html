@@ -803,7 +803,18 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    alert('Серверная транскрипция завершена успешно!\n\nРезультат: ' + data.transcription);
+                    // Получаем обновлённую запись и показываем модалку с транскрипцией
+                    const recResponse = await fetch(`/api/recordings/${id}`, {
+                        headers: {
+                            'Authorization': `Bearer ${authToken}`
+                        }
+                    });
+                    const recData = await recResponse.json();
+                    if (recData.success) {
+                        showRecordingModal(recData.recording);
+                    } else {
+                        alert('Транскрипция завершена, но не удалось получить запись.');
+                    }
                     loadRecordings();
                     loadStats();
                 } else {
