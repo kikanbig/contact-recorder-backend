@@ -223,6 +223,115 @@ router.get('/admin', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+// GET /api/recordings/stats - Статистика записей
+router.get('/stats', authenticateToken, async (req, res) => {
+  try {
+    const stats = await db.getRecordingsStats();
+    
+    // Дополнительная статистика для администраторов
+    let userStats = null;
+    if (req.user.role === 'admin') {
+      userStats = stats;
+    } else {
+      // Статистика только для текущего пользователя
+      const userRecordings = await db.getRecordingsByUser(req.user.id, 1000, 0);
+      userStats = {
+        total_recordings: userRecordings.length,
+        transcribed_recordings: userRecordings.filter(r => r.transcription).length,
+        total_duration_seconds: userRecordings.reduce((sum, r) => sum + (r.duration_seconds || 0), 0),
+        avg_duration_seconds: userRecordings.length > 0 ? 
+          userRecordings.reduce((sum, r) => sum + (r.duration_seconds || 0), 0) / userRecordings.length : 0
+      };
+    }
+
+    res.json({
+      success: true,
+      stats: {
+        total_recordings: parseInt(userStats.total_recordings),
+        transcribed_recordings: parseInt(userStats.transcribed_recordings),
+        pending_transcriptions: parseInt(userStats.total_recordings) - parseInt(userStats.transcribed_recordings),
+        unique_users: userStats.unique_users ? parseInt(userStats.unique_users) : null,
+        unique_locations: userStats.unique_locations ? parseInt(userStats.unique_locations) : null,
+        total_duration_seconds: parseInt(userStats.total_duration_seconds || 0),
+        avg_duration_seconds: Math.round(parseFloat(userStats.avg_duration_seconds || 0))
+      }
+    });
+
+  } catch (error) {
+    console.error('Ошибка получения статистики:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка получения статистики'
+    });
+  }
+});
+
+// GET /api/recordings/system-check - Проверка состояния системы (Python, Whisper)
+router.get('/system-check', authenticateToken, requireAdmin, async (req, res) => {
+  const diagnostics = {
+    timestamp: new Date().toISOString(),
+    python: { available: false, version: null, error: null },
+    whisper: { available: false, version: null, error: null },
+    ffmpeg: { available: false, version: null, error: null },
+    transcription_script: { exists: false, path: null, error: null }
+  };
+
+  try {
+    // Проверяем Python
+    try {
+      const pythonCheck = await runCommand('python3', ['--version']);
+      diagnostics.python.available = true;
+      diagnostics.python.version = pythonCheck.stdout.trim();
+    } catch (error) {
+      diagnostics.python.error = error.message;
+    }
+
+    // Проверяем FFmpeg
+    try {
+      const ffmpegCheck = await runCommand('ffmpeg', ['-version']);
+      diagnostics.ffmpeg.available = true;
+      diagnostics.ffmpeg.version = ffmpegCheck.stdout.split('\n')[0];
+    } catch (error) {
+      diagnostics.ffmpeg.error = error.message;
+    }
+
+    // Проверяем Whisper
+    try {
+      const whisperCheck = await runCommand('python3', ['-c', 'import whisper; print(whisper.__version__)']);
+      diagnostics.whisper.available = true;
+      diagnostics.whisper.version = whisperCheck.stdout.trim();
+    } catch (error) {
+      diagnostics.whisper.error = error.message;
+    }
+
+    // Проверяем скрипт транскрипции
+    const scriptPath = path.join(__dirname, '..', '..', 'transcription_service.py');
+    diagnostics.transcription_script.path = scriptPath;
+    try {
+      if (fs.existsSync(scriptPath)) {
+        diagnostics.transcription_script.exists = true;
+      } else {
+        diagnostics.transcription_script.error = 'Файл не найден';
+      }
+    } catch (error) {
+      diagnostics.transcription_script.error = error.message;
+    }
+
+    res.json({
+      success: true,
+      diagnostics: diagnostics
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка диагностики системы',
+      error: error.message,
+      diagnostics: diagnostics
+    });
+  }
+});
+
 // GET /api/recordings/:id - Получить конкретную запись
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
@@ -449,115 +558,6 @@ router.post('/:id/transcribe-text', authenticateToken, requireAdmin, async (req,
     res.status(500).json({
       success: false,
       message: 'Ошибка сохранения транскрипции'
-    });
-  }
-});
-
-// GET /api/recordings/stats - Статистика записей
-router.get('/stats', authenticateToken, async (req, res) => {
-  try {
-    const stats = await db.getRecordingsStats();
-    
-    // Дополнительная статистика для администраторов
-    let userStats = null;
-    if (req.user.role === 'admin') {
-      userStats = stats;
-    } else {
-      // Статистика только для текущего пользователя
-      const userRecordings = await db.getRecordingsByUser(req.user.id, 1000, 0);
-      userStats = {
-        total_recordings: userRecordings.length,
-        transcribed_recordings: userRecordings.filter(r => r.transcription).length,
-        total_duration_seconds: userRecordings.reduce((sum, r) => sum + (r.duration_seconds || 0), 0),
-        avg_duration_seconds: userRecordings.length > 0 ? 
-          userRecordings.reduce((sum, r) => sum + (r.duration_seconds || 0), 0) / userRecordings.length : 0
-      };
-    }
-
-    res.json({
-      success: true,
-      stats: {
-        total_recordings: parseInt(userStats.total_recordings),
-        transcribed_recordings: parseInt(userStats.transcribed_recordings),
-        pending_transcriptions: parseInt(userStats.total_recordings) - parseInt(userStats.transcribed_recordings),
-        unique_users: userStats.unique_users ? parseInt(userStats.unique_users) : null,
-        unique_locations: userStats.unique_locations ? parseInt(userStats.unique_locations) : null,
-        total_duration_seconds: parseInt(userStats.total_duration_seconds || 0),
-        avg_duration_seconds: Math.round(parseFloat(userStats.avg_duration_seconds || 0))
-      }
-    });
-
-  } catch (error) {
-    console.error('Ошибка получения статистики:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Ошибка получения статистики'
-    });
-  }
-});
-
-// GET /api/recordings/system-check - Проверка состояния системы (Python, Whisper)
-router.get('/system-check', authenticateToken, requireAdmin, async (req, res) => {
-  const diagnostics = {
-    timestamp: new Date().toISOString(),
-    python: { available: false, version: null, error: null },
-    whisper: { available: false, version: null, error: null },
-    ffmpeg: { available: false, version: null, error: null },
-    transcription_script: { exists: false, path: null, error: null }
-  };
-
-  try {
-    // Проверяем Python
-    try {
-      const pythonCheck = await runCommand('python3', ['--version']);
-      diagnostics.python.available = true;
-      diagnostics.python.version = pythonCheck.stdout.trim();
-    } catch (error) {
-      diagnostics.python.error = error.message;
-    }
-
-    // Проверяем FFmpeg
-    try {
-      const ffmpegCheck = await runCommand('ffmpeg', ['-version']);
-      diagnostics.ffmpeg.available = true;
-      diagnostics.ffmpeg.version = ffmpegCheck.stdout.split('\n')[0];
-    } catch (error) {
-      diagnostics.ffmpeg.error = error.message;
-    }
-
-    // Проверяем Whisper
-    try {
-      const whisperCheck = await runCommand('python3', ['-c', 'import whisper; print(whisper.__version__)']);
-      diagnostics.whisper.available = true;
-      diagnostics.whisper.version = whisperCheck.stdout.trim();
-    } catch (error) {
-      diagnostics.whisper.error = error.message;
-    }
-
-    // Проверяем скрипт транскрипции
-    const scriptPath = path.join(__dirname, '..', '..', 'transcription_service.py');
-    diagnostics.transcription_script.path = scriptPath;
-    try {
-      if (fs.existsSync(scriptPath)) {
-        diagnostics.transcription_script.exists = true;
-      } else {
-        diagnostics.transcription_script.error = 'Файл не найден';
-      }
-    } catch (error) {
-      diagnostics.transcription_script.error = error.message;
-    }
-
-    res.json({
-      success: true,
-      diagnostics: diagnostics
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Ошибка диагностики системы',
-      error: error.message,
-      diagnostics: diagnostics
     });
   }
 });
