@@ -409,129 +409,6 @@ router.post('/:id/transcribe', authenticateToken, requireAdmin, async (req, res)
   }
 });
 
-// Функция для вызова локального Whisper
-async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelSize = 'base') {
-  return new Promise((resolve, reject) => {
-    const { spawn } = require('child_process');
-    
-    const scriptPath = path.join(__dirname, '..', '..', 'transcription_service.py');
-    console.log(`🔍 Запуск транскрипции: ${scriptPath}`);
-    console.log(`📁 Аудио файл: ${audioFilePath}`);
-    console.log(`🌍 Язык: ${language}, Модель: ${modelSize}`);
-    
-    // Проверяем существование файлов
-    if (!fs.existsSync(scriptPath)) {
-      reject(new Error(`Python скрипт не найден: ${scriptPath}`));
-      return;
-    }
-    
-    if (!fs.existsSync(audioFilePath)) {
-      reject(new Error(`Аудио файл не найден: ${audioFilePath}`));
-      return;
-    }
-    
-    // Вызываем Python скрипт для транскрипции
-    const pythonProcess = spawn('python3', [
-      scriptPath,
-      audioFilePath,
-      language,
-      modelSize
-    ], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PYTHONUNBUFFERED: '1' }
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    pythonProcess.stdout.on('data', (data) => {
-      const output = data.toString();
-      stdout += output;
-      console.log('🐍 Python stdout:', output);
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      stderr += output;
-      console.log('🐍 Python stderr:', output);
-    });
-
-    pythonProcess.on('close', (code) => {
-      console.log(`🏁 Python процесс завершён с кодом: ${code}`);
-      console.log(`📤 Полный stdout: ${stdout}`);
-      console.log(`📤 Полный stderr: ${stderr}`);
-      
-      if (code !== 0) {
-        console.error('❌ Ошибка Python процесса:', stderr);
-        
-        // Детальный анализ ошибок
-        let errorMessage = `Python процесс завершился с кодом ${code}`;
-        
-        if (stderr.includes('ModuleNotFoundError: No module named \'whisper\'')) {
-          errorMessage = 'Модуль Whisper не установлен на сервере';
-        } else if (stderr.includes('ModuleNotFoundError')) {
-          errorMessage = 'Отсутствуют Python зависимости: ' + stderr;
-        } else if (stderr.includes('CUDA')) {
-          errorMessage = 'Проблема с CUDA/GPU: ' + stderr;
-        } else if (stderr.includes('ffmpeg')) {
-          errorMessage = 'FFmpeg не найден или некорректен: ' + stderr;
-        } else if (stderr.includes('OutOfMemoryError') || stderr.includes('memory')) {
-          errorMessage = 'Недостаточно памяти для обработки: ' + stderr;
-        } else {
-          errorMessage += ': ' + stderr;
-        }
-        
-        reject(new Error(errorMessage));
-        return;
-      }
-
-      try {
-        // Парсим JSON ответ от Python скрипта
-        const jsonOutput = stdout.trim();
-        console.log(`📋 Попытка парсинга JSON: ${jsonOutput}`);
-        
-        const result = JSON.parse(jsonOutput);
-        
-        if (result.success) {
-          console.log(`✅ Транскрипция успешна: ${result.text.substring(0, 100)}...`);
-          resolve(result.text);
-        } else {
-          console.error(`❌ Whisper вернул ошибку: ${result.error}`);
-          reject(new Error(result.error || 'Неизвестная ошибка транскрипции'));
-        }
-      } catch (parseError) {
-        console.error('❌ Ошибка парсинга JSON ответа:', parseError);
-        console.error('🔍 Сырой вывод Python:', stdout);
-        
-        // Если JSON не парсится, возможно это не JSON вывод
-        if (stdout.trim()) {
-          reject(new Error(`Некорректный ответ от Whisper. Ожидался JSON, получено: ${stdout.substring(0, 200)}`));
-        } else {
-          reject(new Error(`Python скрипт не вернул данных. Stderr: ${stderr}`));
-        }
-      }
-    });
-
-    pythonProcess.on('error', (error) => {
-      console.error('❌ Ошибка запуска Python процесса:', error);
-      
-      if (error.code === 'ENOENT') {
-        reject(new Error('Python3 не найден на сервере. Проверьте установку Python.'));
-      } else {
-        reject(new Error(`Ошибка запуска Python: ${error.message}`));
-      }
-    });
-    
-    // Таймаут для очень долгих операций
-    setTimeout(() => {
-      if (!pythonProcess.killed) {
-        pythonProcess.kill('SIGTERM');
-        reject(new Error('Транскрипция прервана по таймауту (5 минут)'));
-      }
-    }, 5 * 60 * 1000); // 5 минут
-  });
-}
-
 // POST /api/recordings/:id/transcribe-text - Сохранение готовой транскрипции (только для администраторов)
 router.post('/:id/transcribe-text', authenticateToken, requireAdmin, async (req, res) => {
   try {
@@ -683,6 +560,129 @@ router.get('/system-check', authenticateToken, requireAdmin, async (req, res) =>
   }
 });
 
+// Функция для вызова локального Whisper
+async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelSize = 'base') {
+  return new Promise((resolve, reject) => {
+    const { spawn } = require('child_process');
+    
+    const scriptPath = path.join(__dirname, '..', '..', 'transcription_service.py');
+    console.log(`🔍 Запуск транскрипции: ${scriptPath}`);
+    console.log(`📁 Аудио файл: ${audioFilePath}`);
+    console.log(`🌍 Язык: ${language}, Модель: ${modelSize}`);
+    
+    // Проверяем существование файлов
+    if (!fs.existsSync(scriptPath)) {
+      reject(new Error(`Python скрипт не найден: ${scriptPath}`));
+      return;
+    }
+    
+    if (!fs.existsSync(audioFilePath)) {
+      reject(new Error(`Аудио файл не найден: ${audioFilePath}`));
+      return;
+    }
+    
+    // Вызываем Python скрипт для транскрипции
+    const pythonProcess = spawn('python3', [
+      scriptPath,
+      audioFilePath,
+      language,
+      modelSize
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, PYTHONUNBUFFERED: '1' }
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      stdout += output;
+      console.log('🐍 Python stdout:', output);
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      stderr += output;
+      console.log('🐍 Python stderr:', output);
+    });
+
+    pythonProcess.on('close', (code) => {
+      console.log(`🏁 Python процесс завершён с кодом: ${code}`);
+      console.log(`📤 Полный stdout: ${stdout}`);
+      console.log(`📤 Полный stderr: ${stderr}`);
+      
+      if (code !== 0) {
+        console.error('❌ Ошибка Python процесса:', stderr);
+        
+        // Детальный анализ ошибок
+        let errorMessage = `Python процесс завершился с кодом ${code}`;
+        
+        if (stderr.includes('ModuleNotFoundError: No module named \'whisper\'')) {
+          errorMessage = 'Модуль Whisper не установлен на сервере';
+        } else if (stderr.includes('ModuleNotFoundError')) {
+          errorMessage = 'Отсутствуют Python зависимости: ' + stderr;
+        } else if (stderr.includes('CUDA')) {
+          errorMessage = 'Проблема с CUDA/GPU: ' + stderr;
+        } else if (stderr.includes('ffmpeg')) {
+          errorMessage = 'FFmpeg не найден или некорректен: ' + stderr;
+        } else if (stderr.includes('OutOfMemoryError') || stderr.includes('memory')) {
+          errorMessage = 'Недостаточно памяти для обработки: ' + stderr;
+        } else {
+          errorMessage += ': ' + stderr;
+        }
+        
+        reject(new Error(errorMessage));
+        return;
+      }
+
+      try {
+        // Парсим JSON ответ от Python скрипта
+        const jsonOutput = stdout.trim();
+        console.log(`📋 Попытка парсинга JSON: ${jsonOutput}`);
+        
+        const result = JSON.parse(jsonOutput);
+        
+        if (result.success) {
+          console.log(`✅ Транскрипция успешна: ${result.text.substring(0, 100)}...`);
+          resolve(result.text);
+        } else {
+          console.error(`❌ Whisper вернул ошибку: ${result.error}`);
+          reject(new Error(result.error || 'Неизвестная ошибка транскрипции'));
+        }
+      } catch (parseError) {
+        console.error('❌ Ошибка парсинга JSON ответа:', parseError);
+        console.error('🔍 Сырой вывод Python:', stdout);
+        
+        // Если JSON не парсится, возможно это не JSON вывод
+        if (stdout.trim()) {
+          reject(new Error(`Некорректный ответ от Whisper. Ожидался JSON, получено: ${stdout.substring(0, 200)}`));
+        } else {
+          reject(new Error(`Python скрипт не вернул данных. Stderr: ${stderr}`));
+        }
+      }
+    });
+
+    pythonProcess.on('error', (error) => {
+      console.error('❌ Ошибка запуска Python процесса:', error);
+      
+      if (error.code === 'ENOENT') {
+        reject(new Error('Python3 не найден на сервере. Проверьте установку Python.'));
+      } else {
+        reject(new Error(`Ошибка запуска Python: ${error.message}`));
+      }
+    });
+    
+    // Таймаут для очень долгих операций
+    setTimeout(() => {
+      if (!pythonProcess.killed) {
+        pythonProcess.kill('SIGTERM');
+        reject(new Error('Транскрипция прервана по таймауту (5 минут)'));
+      }
+    }, 5 * 60 * 1000);
+  });
+}
+
 // Вспомогательная функция для выполнения команд
 function runCommand(command, args) {
   return new Promise((resolve, reject) => {
@@ -713,5 +713,21 @@ function runCommand(command, args) {
     });
   });
 }
+
+// МАССОВОЕ УДАЛЕНИЕ ЗАПИСЕЙ (только для админов)
+router.delete('/', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, message: 'Не передан массив id для удаления' });
+    }
+    // Удаляем записи по id
+    const deleted = await db.deleteRecordingsByIds(ids);
+    res.json({ success: true, deleted });
+  } catch (error) {
+    console.error('Ошибка массового удаления записей:', error);
+    res.status(500).json({ success: false, message: 'Ошибка удаления записей' });
+  }
+});
 
 module.exports = router; 

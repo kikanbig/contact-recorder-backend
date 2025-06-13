@@ -293,6 +293,14 @@ const db = {
     `);
     
     return result.rows[0];
+  },
+
+  async deleteRecordingsByIds(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return 0;
+    const result = await pool.query(
+      `DELETE FROM recordings WHERE id = ANY($1::int[])`, [ids]
+    );
+    return result.rowCount;
   }
 };
 
