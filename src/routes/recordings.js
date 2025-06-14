@@ -681,13 +681,13 @@ router.post('/:id/transcribe-whisperx', authenticateToken, requireAdmin, async (
   }
 });
 
-// Функция для вызова локального Whisper (Faster-Whisper)
+// Функция для вызова WhisperX с диаризацией (с fallback на простую версию)
 async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelSize = 'small') {
   return new Promise((resolve, reject) => {
     const { spawn } = require('child_process');
     
     const scriptPath = path.join(__dirname, '..', '..', 'transcription_service.py');
-    console.log(`🔍 Запуск Faster-Whisper транскрипции: ${scriptPath}`);
+    console.log(`🔍 Запуск WhisperX транскрипции с диаризацией: ${scriptPath}`);
     console.log(`📁 Аудио файл: ${audioFilePath}`);
     console.log(`🌍 Язык: ${language}, Модель: ${modelSize}`);
     
@@ -734,13 +734,28 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
       console.log(`📤 Полный stderr: ${stderr}`);
       
       if (code !== 0) {
-        console.error('❌ Ошибка Python процесса:', stderr);
+        console.error('❌ Ошибка WhisperX с диаризацией:', stderr);
+        
+        // Если ошибка связана с pyannote.audio, пробуем fallback без диаризации
+        if (stderr.includes('pyannote') || stderr.includes('DiarizationPipeline') || stderr.includes('Model was trained')) {
+          console.log('🔄 Пробуем fallback без диаризации...');
+          
+          // Вызываем упрощенную версию без диаризации
+          const fallbackScriptPath = path.join(__dirname, '..', '..', 'transcription_service_simple.py');
+          
+          if (fs.existsSync(fallbackScriptPath)) {
+            transcribeWithFallback(fallbackScriptPath, audioFilePath, language, modelSize)
+              .then(resolve)
+              .catch(reject);
+            return;
+          }
+        }
         
         // Детальный анализ ошибок
-        let errorMessage = `Python процесс завершился с кодом ${code}`;
+        let errorMessage = `WhisperX процесс завершился с кодом ${code}`;
         
-        if (stderr.includes('ModuleNotFoundError: No module named \'whisper\'')) {
-          errorMessage = 'Модуль Whisper не установлен на сервере';
+        if (stderr.includes('ModuleNotFoundError: No module named \'whisperx\'')) {
+          errorMessage = 'Модуль WhisperX не установлен на сервере';
         } else if (stderr.includes('ModuleNotFoundError')) {
           errorMessage = 'Отсутствуют Python зависимости: ' + stderr;
         } else if (stderr.includes('CUDA')) {
@@ -809,6 +824,66 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
         reject(new Error('Транскрипция прервана по таймауту (5 минут)'));
       }
     }, 5 * 60 * 1000);
+  });
+}
+
+// Функция fallback для транскрипции без диаризации
+async function transcribeWithFallback(scriptPath, audioFilePath, language, modelSize) {
+  return new Promise((resolve, reject) => {
+    const { spawn } = require('child_process');
+    
+    console.log(`🔄 Запуск fallback транскрипции без диаризации: ${scriptPath}`);
+    
+    const pythonProcess = spawn('python3', [
+      scriptPath,
+      audioFilePath,
+      language,
+      modelSize
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, PYTHONUNBUFFERED: '1' }
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      stdout += output;
+      console.log('🔄 Fallback stdout:', output);
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      stderr += output;
+      console.log('🔄 Fallback stderr:', output);
+    });
+
+    pythonProcess.on('close', (code) => {
+      console.log(`🏁 Fallback процесс завершён с кодом: ${code}`);
+      
+      if (code !== 0) {
+        reject(new Error(`Fallback транскрипция не удалась: ${stderr}`));
+        return;
+      }
+
+      try {
+        const result = JSON.parse(stdout.trim());
+        
+        if (result.success) {
+          console.log(`✅ Fallback транскрипция успешна: ${result.text.substring(0, 100)}...`);
+          resolve(result.text);
+        } else {
+          reject(new Error(result.error || 'Неизвестная ошибка fallback транскрипции'));
+        }
+      } catch (parseError) {
+        reject(new Error(`Ошибка парсинга fallback результата: ${parseError.message}`));
+      }
+    });
+
+    pythonProcess.on('error', (error) => {
+      reject(new Error(`Ошибка запуска fallback: ${error.message}`));
+    });
   });
 }
 

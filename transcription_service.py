@@ -57,12 +57,35 @@ def transcribe_audio_with_diarization(audio_data, language='ru', model_size='sma
             
             # 5. Диаризация (разделение по говорящим)
             print("👥 Выполняем диаризацию (разделение по говорящим)...", file=sys.stderr)
-            diarize_model = whisperx.DiarizationPipeline(use_auth_token=None, device=device)
-            diarize_segments = diarize_model(audio)
+            try:
+                diarize_model = whisperx.DiarizationPipeline(use_auth_token=None, device=device)
+                diarize_segments = diarize_model(audio)
+            except Exception as diarize_error:
+                print(f"⚠️ Ошибка диаризации: {diarize_error}", file=sys.stderr)
+                print("📝 Продолжаем без диаризации...", file=sys.stderr)
+                # Возвращаем результат без диаризации
+                full_text = ""
+                for segment in result["segments"]:
+                    full_text += segment["text"]
+                
+                return {
+                    'success': True,
+                    'text': full_text.strip(),
+                    'segments': [],
+                    'speakers': [],
+                    'speaker_count': 0,
+                    'language': language,
+                    'error': None,
+                    'diarization_error': str(diarize_error)
+                }
             
             # 6. Назначаем говорящих к сегментам
             print("🏷️ Назначаем говорящих к сегментам...", file=sys.stderr)
-            result = whisperx.assign_word_speakers(diarize_segments, result)
+            try:
+                result = whisperx.assign_word_speakers(diarize_segments, result)
+            except Exception as assign_error:
+                print(f"⚠️ Ошибка назначения говорящих: {assign_error}", file=sys.stderr)
+                print("📝 Продолжаем без назначения говорящих...", file=sys.stderr)
             
             # Обрабатываем результаты
             segments_with_speakers = []

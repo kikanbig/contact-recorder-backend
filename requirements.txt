@@ -1,8 +1,11 @@
-faster-whisper
 whisperx
-torch
-torchaudio
+torch>=1.12.0
+torchaudio>=0.12.0
 ffmpeg-python
 numpy
-pyannote.audio
-speechbrain 
+pyannote.audio>=3.1.0
+speechbrain>=0.5.0
+transformers>=4.21.0
+accelerate
+librosa
+soundfile 
