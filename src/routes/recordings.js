@@ -687,7 +687,7 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
     const { spawn } = require('child_process');
     
     const scriptPath = path.join(__dirname, '..', '..', 'transcription_service.py');
-    console.log(`🔍 Запуск упрощенной WhisperX транскрипции: ${scriptPath}`);
+    console.log(`🔍 Запуск ПОЛНОЙ WhisperX транскрипции с диаризацией: ${scriptPath}`);
     console.log(`📁 Аудио файл: ${audioFilePath}`);
     console.log(`🌍 Язык: ${language}, Модель: ${modelSize}`);
     
@@ -734,10 +734,12 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
       console.log(`📤 Полный stderr: ${stderr}`);
       
       if (code !== 0) {
-        console.error('❌ Ошибка упрощенной WhisperX транскрипции:', stderr);
+        console.error('❌ Ошибка ПОЛНОЙ WhisperX транскрипции с диаризацией:', stderr);
         
-        // Логируем ошибку без fallback (основной скрипт уже упрощен)
-        console.log('❌ Ошибка транскрипции, fallback не требуется - основной скрипт уже упрощен');
+        // Детальная диагностика ошибок диаризации
+        console.log('🔍 ДИАГНОСТИКА ОШИБКИ:');
+        console.log('📋 Полный stderr:', stderr);
+        console.log('📋 Полный stdout:', stdout);
         
         // Детальный анализ ошибок
         let errorMessage = `WhisperX процесс завершился с кодом ${code}`;
@@ -770,11 +772,26 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
         const result = JSON.parse(jsonOutput);
         
         if (result.success) {
-          console.log(`✅ Упрощенная WhisperX транскрипция успешна: ${result.text.substring(0, 100)}...`);
-          // Всегда возвращаем обычный текст (без диаризации)
-          resolve(result.text);
+          console.log(`🎉 ПОЛНАЯ WhisperX транскрипция с диаризацией УСПЕШНА!`);
+          console.log(`📊 Результат: ${result.text.substring(0, 100)}...`);
+          
+          if (result.speakers && result.segments && result.speaker_count > 0) {
+            console.log(`👥 Найдено говорящих: ${result.speaker_count} (${result.speakers.join(', ')})`);
+            console.log(`📝 Сегментов диалога: ${result.segments.length}`);
+            // Сохраняем полный JSON результат с диаризацией
+            resolve(JSON.stringify(result));
+          } else {
+            console.log(`⚠️ Диаризация не удалась, возвращаем обычный текст`);
+            if (result.warning) {
+              console.log(`⚠️ Предупреждение: ${result.warning}`);
+            }
+            // Обычная транскрипция без диаризации
+            resolve(result.text);
+          }
         } else {
-          console.error(`❌ Упрощенная WhisperX вернула ошибку: ${result.error}`);
+          console.error(`❌ ПОЛНАЯ WhisperX вернула ошибку: ${result.error}`);
+          console.error(`❌ Тип ошибки: ${result.error_type}`);
+          console.error(`❌ Шаг ошибки: ${result.step}`);
           reject(new Error(result.error || 'Неизвестная ошибка транскрипции'));
         }
       } catch (parseError) {

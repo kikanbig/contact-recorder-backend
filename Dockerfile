@@ -28,11 +28,25 @@ COPY package*.json ./
 # Устанавливаем Node.js зависимости
 RUN npm ci --only=production
 
-# Копируем Python requirements и устанавливаем зависимости
+# Копируем Python requirements и устанавливаем зависимости поэтапно
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
-# Принудительно переустанавливаем все зависимости для решения конфликтов версий
-RUN python3 -m pip install --no-cache-dir --force-reinstall -r requirements.txt
+
+# Устанавливаем базовые зависимости сначала
+RUN python3 -m pip install --no-cache-dir torch>=1.12.0,<2.0.0 torchaudio>=0.12.0,<2.0.0
+
+# Устанавливаем основные зависимости
+RUN python3 -m pip install --no-cache-dir numpy ffmpeg-python librosa soundfile transformers>=4.21.0
+
+# Устанавливаем WhisperX
+RUN python3 -m pip install --no-cache-dir whisperx
+
+# Устанавливаем зависимости для диаризации
+RUN python3 -m pip install --no-cache-dir huggingface_hub datasets omegaconf hydra-core accelerate
+
+# Устанавливаем pyannote.audio и speechbrain последними (самые проблемные)
+RUN python3 -m pip install --no-cache-dir speechbrain>=0.5.0
+RUN python3 -m pip install --no-cache-dir pyannote.audio==3.1.1
 
 # Копируем исходный код приложения
 COPY . .
