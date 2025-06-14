@@ -249,6 +249,45 @@
             font-family: 'Fira Mono', 'Consolas', 'Menlo', monospace;
             color: var(--color-text);
         }
+        .transcription-info {
+            background: #1e293b;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            border-left: 4px solid var(--color-success);
+            color: var(--color-text);
+        }
+        .transcription-dialog {
+            background: #18181b;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .dialog-segment {
+            padding: 12px 15px;
+            border-bottom: 1px solid #374151;
+            line-height: 1.6;
+        }
+        .dialog-segment:last-child {
+            border-bottom: none;
+        }
+        .dialog-segment.speaker-1 {
+            background: #1e293b;
+            border-left: 4px solid #3b82f6;
+        }
+        .dialog-segment.speaker-2 {
+            background: #1f2937;
+            border-left: 4px solid #10b981;
+        }
+        .dialog-segment strong {
+            color: var(--color-primary);
+            margin-right: 8px;
+        }
+        .timestamp {
+            color: var(--color-muted);
+            font-size: 12px;
+            font-style: italic;
+            margin-left: 10px;
+        }
         .loading {
             text-align: center;
             color: var(--color-muted);
@@ -1270,7 +1309,41 @@
                     const resultDiv = document.getElementById('transcriptionResult');
                     const textDiv = document.getElementById('transcriptionText');
                     
-                    textDiv.textContent = data.recording.transcription;
+                    // Пытаемся парсить JSON для получения дополнительной информации о диаризации
+                    let transcriptionData;
+                    try {
+                        transcriptionData = JSON.parse(data.recording.transcription);
+                    } catch (e) {
+                        // Если не JSON, то это обычный текст
+                        transcriptionData = { text: data.recording.transcription };
+                    }
+                    
+                    let displayText = '';
+                    
+                    // Если есть информация о говорящих и сегментах
+                    if (transcriptionData.segments && transcriptionData.speakers) {
+                        displayText += `<div class="transcription-info">`;
+                        displayText += `<strong>📊 Найдено говорящих:</strong> ${transcriptionData.speaker_count || transcriptionData.speakers.length} (${transcriptionData.speakers.join(', ')})<br>`;
+                        displayText += `<strong>📝 Сегментов диалога:</strong> ${transcriptionData.segments.length}<br><br>`;
+                        displayText += `</div>`;
+                        
+                        displayText += `<div class="transcription-dialog">`;
+                        transcriptionData.segments.forEach((segment, index) => {
+                            const speakerClass = segment.speaker === 'SPEAKER_00' ? 'speaker-1' : 'speaker-2';
+                            displayText += `<div class="dialog-segment ${speakerClass}">`;
+                            displayText += `<strong>[${segment.speaker}]:</strong> ${segment.text}`;
+                            if (segment.start !== undefined) {
+                                displayText += ` <span class="timestamp">(${Math.round(segment.start)}с - ${Math.round(segment.end)}с)</span>`;
+                            }
+                            displayText += `</div>`;
+                        });
+                        displayText += `</div>`;
+                    } else {
+                        // Обычный текст без диаризации
+                        displayText = transcriptionData.text || data.recording.transcription;
+                    }
+                    
+                    textDiv.innerHTML = displayText;
                     resultDiv.style.display = 'block';
                     
                     // Скроллим к результату

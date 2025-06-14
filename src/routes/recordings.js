@@ -765,10 +765,18 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
         const result = JSON.parse(jsonOutput);
         
         if (result.success) {
-          console.log(`✅ Faster-Whisper транскрипция успешна: ${result.text.substring(0, 100)}...`);
-          resolve(result.text);
+          console.log(`✅ WhisperX транскрипция успешна: ${result.text.substring(0, 100)}...`);
+          if (result.speakers && result.segments) {
+            console.log(`👥 Найдено говорящих: ${result.speaker_count} (${result.speakers.join(', ')})`);
+            console.log(`📝 Сегментов диалога: ${result.segments.length}`);
+            // Сохраняем полный JSON результат с диаризацией
+            resolve(JSON.stringify(result));
+          } else {
+            // Обычная транскрипция без диаризации
+            resolve(result.text);
+          }
         } else {
-          console.error(`❌ Faster-Whisper вернул ошибку: ${result.error}`);
+          console.error(`❌ WhisperX вернул ошибку: ${result.error}`);
           reject(new Error(result.error || 'Неизвестная ошибка транскрипции'));
         }
       } catch (parseError) {
