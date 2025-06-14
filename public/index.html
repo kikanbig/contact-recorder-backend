@@ -918,7 +918,7 @@
                 button.disabled = true;
                 button.textContent = 'Транскрибируется...';
 
-                const response = await fetch(`/api/recordings/${id}/transcribe`, {
+                const response = await fetch(`/api/recordings/${id}/transcribe-whisperx`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${authToken}`,
@@ -1026,10 +1026,46 @@
 
                 ${recording.transcription ? `
                     <div>
-                        <h4>Транскрипция</h4>
-                        <div class="transcription-text">${recording.transcription}</div>
+                        <h4>Транскрипция WhisperX с диаризацией</h4>
+                        
+                        ${recording.metadata && recording.metadata.speakers && recording.metadata.speakers.total_speakers > 1 ? `
+                            <div style="background: var(--bg-secondary); padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                                <h5 style="margin: 0 0 10px 0; color: var(--color-primary);">👥 Обнаружено спикеров: ${recording.metadata.speakers.total_speakers}</h5>
+                                
+                                ${recording.metadata.dialogue ? `
+                                    <div style="background: var(--bg-primary); padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                                        <h6 style="margin: 0 0 10px 0;">💬 Диалог:</h6>
+                                        <div class="transcription-text" style="white-space: pre-line; line-height: 1.6;">${recording.metadata.dialogue}</div>
+                                    </div>
+                                ` : ''}
+                                
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">
+                                    ${recording.metadata.seller_text ? `
+                                        <div style="background: var(--bg-primary); padding: 10px; border-radius: 6px;">
+                                            <h6 style="margin: 0 0 8px 0; color: #10b981;">👤 Продавец:</h6>
+                                            <div style="font-size: 14px; line-height: 1.4;">${recording.metadata.seller_text}</div>
+                                        </div>
+                                    ` : ''}
+                                    
+                                    ${recording.metadata.client_text ? `
+                                        <div style="background: var(--bg-primary); padding: 10px; border-radius: 6px;">
+                                            <h6 style="margin: 0 0 8px 0; color: #3b82f6;">🛒 Клиент:</h6>
+                                            <div style="font-size: 14px; line-height: 1.4;">${recording.metadata.client_text}</div>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        ` : ''}
+                        
+                        <details style="margin-top: 15px;">
+                            <summary style="cursor: pointer; color: var(--color-text-secondary);">Полная транскрипция</summary>
+                            <div class="transcription-text" style="margin-top: 10px; padding: 10px; background: var(--bg-secondary); border-radius: 6px;">${recording.transcription}</div>
+                        </details>
+                        
                         <p style="font-size: 12px; color: #64748b; margin-top: 10px;">
                             Транскрибировано: ${formatDate(recording.transcribed_at)}
+                            ${recording.metadata && recording.metadata.model_used ? ` | Модель: ${recording.metadata.model_used}` : ''}
+                            ${recording.metadata && recording.metadata.device ? ` | Устройство: ${recording.metadata.device}` : ''}
                         </p>
                     </div>
                 ` : `

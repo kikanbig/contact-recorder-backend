@@ -280,6 +280,17 @@ const db = {
     return result.rows[0];
   },
 
+  async updateRecordingMetadata(id, metadata) {
+    const result = await pool.query(`
+      UPDATE recordings 
+      SET metadata = $1
+      WHERE id = $2 
+      RETURNING *
+    `, [JSON.stringify(metadata), id]);
+    
+    return result.rows[0];
+  },
+
   async getRecordingsStats() {
     const result = await pool.query(`
       SELECT 
