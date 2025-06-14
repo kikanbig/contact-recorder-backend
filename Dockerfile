@@ -1,99 +1,87 @@
-# Используем Ubuntu образ для лучшей совместимости с Python библиотеками
-FROM ubuntu:22.04
-
-# Предотвращаем интерактивные запросы во время установки
-ENV DEBIAN_FRONTEND=noninteractive
+# Используем официальный Python образ
+FROM python:3.11-slim
 
 # Устанавливаем системные зависимости
 RUN apt-get update && apt-get install -y \
-    curl \
-    python3 \
-    python3-pip \
-    python3-dev \
     ffmpeg \
     git \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем Node.js 18
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs
-
 # Создаем рабочую директорию
 WORKDIR /app
 
-# Копируем package.json и package-lock.json
+# Копируем файлы проекта
 COPY package*.json ./
+COPY requirements.txt ./
+COPY requirements_speechbrain.txt ./
+COPY *.py ./
+COPY *.js ./
+
+# Копируем папку admin отдельно
+COPY admin/ ./admin/
 
 # Устанавливаем Node.js зависимости
-RUN npm ci --only=production
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install && \
+    rm -rf /var/lib/apt/lists/*
 
-# Обновляем pip и базовые инструменты
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
-
-# ПОЭТАПНАЯ УСТАНОВКА PYTHON ЗАВИСИМОСТЕЙ ДЛЯ ДИАГНОСТИКИ
+# Обновляем pip и устанавливаем wheel
+RUN python -m pip install --upgrade pip setuptools wheel
 
 # Шаг 1: Проверяем Python и pip
-RUN echo "🔥 Шаг 1: Проверяем Python и pip..." && \
-    python3 --version && \
-    pip --version
+RUN echo "🐍 УСТАНОВКА PYTHON ЗАВИСИМОСТЕЙ" && \
+    python -c "import sys; print(f'Python версия: {sys.version}')"
 
-# Шаг 2: Устанавливаем PyTorch (упрощенные версии)
-RUN echo "🔥 Шаг 2: Устанавливаем PyTorch..." && \
-    python3 -m pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+# Шаг 2: Устанавливаем PyTorch CPU
+RUN echo "🔥 Шаг 2: Установка PyTorch CPU..." && \
+    python -m pip install torch==2.1.0+cpu torchvision==0.16.0+cpu torchaudio==2.1.0+cpu -f https://download.pytorch.org/whl/torch_stable.html && \
+    python -c "import torch; print(f'✅ PyTorch {torch.__version__} установлен')"
 
-# Шаг 3: Проверяем установку PyTorch
-RUN echo "🔥 Шаг 3: Проверяем PyTorch..." && \
-    python3 -c "import torch; print(f'PyTorch версия: {torch.__version__}')"
+# Шаг 3: Устанавливаем базовые зависимости
+RUN echo "📦 Шаг 3: Установка базовых зависимостей..." && \
+    python -m pip install numpy==1.24.3 scipy==1.11.1 && \
+    python -c "import numpy, scipy; print('✅ NumPy и SciPy установлены')"
 
-# Шаг 4: Устанавливаем базовые зависимости
-RUN echo "🔥 Шаг 4: Устанавливаем базовые зависимости..." && \
-    python3 -m pip install --no-cache-dir numpy ffmpeg-python librosa soundfile
+# Шаг 4: Устанавливаем аудио библиотеки
+RUN echo "🎵 Шаг 4: Установка аудио библиотек..." && \
+    python -m pip install librosa==0.10.1 soundfile==0.12.1 && \
+    python -c "import librosa, soundfile; print('✅ Аудио библиотеки установлены')"
 
 # Шаг 5: Устанавливаем Transformers
-RUN echo "🔥 Шаг 5: Устанавливаем Transformers..." && \
-    python3 -m pip install --no-cache-dir transformers
+RUN echo "🤖 Шаг 5: Установка Transformers..." && \
+    python -m pip install transformers==4.35.0 tokenizers==0.14.1 && \
+    python -c "import transformers; print('✅ Transformers установлен')"
 
-# Шаг 6: Устанавливаем WhisperX (основная библиотека)
-RUN echo "🔥 Шаг 6: Устанавливаем WhisperX..." && \
-    python3 -m pip install --no-cache-dir whisperx
+# Шаг 6: Устанавливаем faster-whisper
+RUN echo "🎤 Шаг 6: Установка faster-whisper..." && \
+    python -m pip install faster-whisper==0.9.0 && \
+    python -c "import faster_whisper; print('✅ faster-whisper установлен')"
 
-# Шаг 7: Проверяем WhisperX
-RUN echo "🔥 Шаг 7: Проверяем WhisperX..." && \
-    python3 -c "import whisperx; print('WhisperX импортирован успешно')"
+# Шаг 8: Устанавливаем SpeechBrain для диаризации
+RUN echo "🧠 Шаг 8: Установка SpeechBrain для диаризации..." && \
+    python -m pip install speechbrain==0.5.16 && \
+    python -m pip install pyannote.audio==3.1.1 && \
+    python -c "import speechbrain; print('✅ SpeechBrain установлен')" && \
+    python -c "import pyannote.audio; print('✅ pyannote.audio установлен')"
 
-# Шаг 8: Устанавливаем зависимости для диаризации
-RUN echo "🔥 Шаг 8: Устанавливаем зависимости для диаризации..." && \
-    python3 -m pip install --no-cache-dir huggingface_hub datasets
+# Шаг 9: Финальная проверка всех компонентов
+RUN echo "✅ Шаг 9: Финальная проверка компонентов..." && \
+    python -c "import sys; print('🔍 ФИНАЛЬНАЯ ДИАГНОСТИКА:'); import torch; print(f'✅ PyTorch: {torch.__version__}'); import faster_whisper; print('✅ faster-whisper: импортирован'); import librosa; print(f'✅ librosa: {librosa.__version__}'); import transformers; print(f'✅ transformers: {transformers.__version__}'); import speechbrain; print('✅ SpeechBrain: импортирован'); import pyannote.audio; print('✅ pyannote.audio: импортирован'); print('🎉 Диагностика завершена!')"
 
-# Шаг 9: Устанавливаем конфигурационные библиотеки
-RUN echo "🔥 Шаг 9: Устанавливаем конфигурационные библиотеки..." && \
-    python3 -m pip install --no-cache-dir omegaconf hydra-core
+# Создаем директории для загрузок и записей
+RUN mkdir -p uploads records
 
-# Шаг 10: Устанавливаем accelerate
-RUN echo "🔥 Шаг 10: Устанавливаем accelerate..." && \
-    python3 -m pip install --no-cache-dir accelerate
+# Проверяем что папка admin скопировалась
+RUN echo "📁 Проверяем структуру файлов:" && \
+    ls -la && \
+    echo "📂 Содержимое admin:" && \
+    ls -la admin/ || echo "❌ Папка admin не найдена"
 
-# Шаг 11: Устанавливаем SpeechBrain (может быть проблемным)
-RUN echo "🔥 Шаг 11: Устанавливаем SpeechBrain..." && \
-    python3 -m pip install --no-cache-dir speechbrain
-
-# Шаг 12: Устанавливаем pyannote.audio (самый проблемный)
-RUN echo "🔥 Шаг 12: Устанавливаем pyannote.audio..." && \
-    python3 -m pip install --no-cache-dir pyannote.audio
-
-# Шаг 13: Финальная проверка всех библиотек
-RUN echo "🔥 Шаг 13: Финальная проверка..." && \
-    python3 -c "import torch, whisperx, pyannote.audio; print('🎉 ВСЕ БИБЛИОТЕКИ УСТАНОВЛЕНЫ УСПЕШНО!')"
-
-# Копируем исходный код приложения
-COPY . .
-
-# Создаем директорию для загрузок
-RUN mkdir -p uploads
-
-# Экспортируем порт
+# Открываем порт
 EXPOSE 3000
 
-# Запускаем приложение
-CMD ["npm", "start"] 
+# Запускаем сервер
+CMD ["node", "server.js"] 

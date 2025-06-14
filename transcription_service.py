@@ -1,20 +1,63 @@
 #!/usr/bin/env python3
 """
-Полноценный сервис транскрипции через WhisperX с диаризацией
-Обрабатывает аудио файлы с разделением по говорящим
+Упрощенный сервис транскрипции через faster-whisper
+Обрабатывает аудио файлы с детальными логами
 """
 
 import sys
 import os
 import json
 import tempfile
-import torch
-import whisperx
-from pathlib import Path
+import traceback
 
-def transcribe_audio_with_diarization(audio_data, language='ru', model_size='small'):
+# Детальная диагностика версий библиотек
+def diagnose_system():
+    """Диагностика системы и версий библиотек"""
+    print("🔍 ДИАГНОСТИКА СИСТЕМЫ:", file=sys.stderr)
+    print(f"🐍 Python версия: {sys.version}", file=sys.stderr)
+    
+    try:
+        import torch
+        print(f"🔥 PyTorch версия: {torch.__version__}", file=sys.stderr)
+        print(f"🔥 PyTorch CUDA доступен: {torch.cuda.is_available()}", file=sys.stderr)
+    except ImportError as e:
+        print(f"❌ PyTorch не найден: {e}", file=sys.stderr)
+        return False
+    
+    try:
+        import faster_whisper
+        print(f"🎤 faster-whisper импортирован успешно", file=sys.stderr)
+    except ImportError as e:
+        print(f"❌ faster-whisper не найден: {e}", file=sys.stderr)
+        return False
+    
+    try:
+        import librosa
+        print(f"🎵 librosa версия: {librosa.__version__}", file=sys.stderr)
+    except ImportError as e:
+        print(f"❌ librosa не найден: {e}", file=sys.stderr)
+        return False
+    
+    return True
+
+# Импортируем библиотеки с диагностикой
+try:
+    import torch
+    from faster_whisper import WhisperModel
+    import librosa
+    import soundfile as sf
+    from pathlib import Path
+    
+    print("✅ Все библиотеки импортированы успешно", file=sys.stderr)
+    
+except ImportError as e:
+    print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ИМПОРТА: {e}", file=sys.stderr)
+    print(f"❌ Трейсбек: {traceback.format_exc()}", file=sys.stderr)
+    sys.exit(1)
+
+def transcribe_audio_simple(audio_data, language='ru', model_size='small'):
     """
-    Транскрибирует аудио данные через WhisperX с полной диаризацией
+    Транскрибирует аудио данные через faster-whisper
     
     Args:
         audio_data: Бинарные данные аудио файла
@@ -22,11 +65,10 @@ def transcribe_audio_with_diarization(audio_data, language='ru', model_size='sma
         model_size: Размер модели ('tiny', 'base', 'small', 'medium', 'large')
     
     Returns:
-        dict: {'success': bool, 'text': str, 'segments': list, 'speakers': list, 'error': str}
+        dict: {'success': bool, 'text': str, 'segments': list, 'error': str}
     """
     try:
-        print(f"🚀 Загружаем WhisperX модель: {model_size}", file=sys.stderr)
-        print(f"👥 Диаризация: ВКЛЮЧЕНА", file=sys.stderr)
+        print(f"🚀 Загружаем faster-whisper модель: {model_size}", file=sys.stderr)
         
         # Определяем устройство
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -40,171 +82,76 @@ def transcribe_audio_with_diarization(audio_data, language='ru', model_size='sma
             temp_path = temp_file.name
         
         try:
-            # 1. Загружаем модель WhisperX
-            print("📥 Шаг 1: Загружаем модель WhisperX...", file=sys.stderr)
-            model = whisperx.load_model(model_size, device, compute_type=compute_type, language=language)
-            print("✅ Модель WhisperX загружена", file=sys.stderr)
-            
-            # 2. Загружаем аудио
-            print(f"🎵 Шаг 2: Загружаем аудио файл: {temp_path}", file=sys.stderr)
-            audio = whisperx.load_audio(temp_path)
-            print("✅ Аудио загружено", file=sys.stderr)
-            
-            # 3. Выполняем транскрипцию
-            print("🎯 Шаг 3: Выполняем транскрипцию...", file=sys.stderr)
-            result = model.transcribe(audio, batch_size=16)
-            print(f"✅ Транскрипция завершена, сегментов: {len(result['segments'])}", file=sys.stderr)
-            
-            # 4. Выравнивание (alignment) для точной временной разметки
-            print("⏰ Шаг 4: Выполняем выравнивание временных меток...", file=sys.stderr)
+            # 1. Загружаем модель faster-whisper
+            print("📥 Шаг 1: Загружаем модель faster-whisper...", file=sys.stderr)
             try:
-                model_a, metadata = whisperx.load_align_model(language_code=language, device=device)
-                result = whisperx.align(result["segments"], model_a, metadata, audio, device, return_char_alignments=False)
-                print("✅ Выравнивание завершено", file=sys.stderr)
-            except Exception as align_error:
-                print(f"⚠️ Ошибка выравнивания: {align_error}", file=sys.stderr)
-                print("📝 Продолжаем без выравнивания...", file=sys.stderr)
+                model = WhisperModel(model_size, device=device, compute_type=compute_type)
+                print("✅ Модель faster-whisper загружена", file=sys.stderr)
+            except Exception as model_error:
+                print(f"❌ Ошибка загрузки модели faster-whisper: {model_error}", file=sys.stderr)
+                print(f"❌ Трейсбек модели: {traceback.format_exc()}", file=sys.stderr)
+                raise
             
-            # 5. Диаризация (разделение по говорящим)
-            print("👥 Шаг 5: Выполняем диаризацию (разделение по говорящим)...", file=sys.stderr)
-            diarize_segments = None
+            # 2. Выполняем транскрипцию
+            print(f"🎯 Шаг 2: Выполняем транскрипцию файла: {temp_path}", file=sys.stderr)
             try:
-                print("🔧 Инициализируем DiarizationPipeline...", file=sys.stderr)
-                diarize_model = whisperx.DiarizationPipeline(use_auth_token=None, device=device)
-                print("✅ DiarizationPipeline создан", file=sys.stderr)
-                
-                print("🎤 Выполняем диаризацию аудио...", file=sys.stderr)
-                diarize_segments = diarize_model(audio)
-                print("✅ Диаризация завершена", file=sys.stderr)
-                
-                # 6. Назначаем говорящих к сегментам
-                print("🏷️ Шаг 6: Назначаем говорящих к сегментам...", file=sys.stderr)
-                try:
-                    result = whisperx.assign_word_speakers(diarize_segments, result)
-                    print("✅ Говорящие назначены к сегментам", file=sys.stderr)
-                except Exception as assign_error:
-                    print(f"⚠️ Ошибка назначения говорящих: {assign_error}", file=sys.stderr)
-                    print("📝 Продолжаем без назначения говорящих...", file=sys.stderr)
-                    
-            except Exception as diarize_error:
-                print(f"❌ КРИТИЧЕСКАЯ ОШИБКА ДИАРИЗАЦИИ: {diarize_error}", file=sys.stderr)
-                print(f"❌ Тип ошибки: {type(diarize_error).__name__}", file=sys.stderr)
-                print(f"❌ Детали ошибки: {str(diarize_error)}", file=sys.stderr)
-                
-                # Возвращаем ошибку для диагностики
-                return {
-                    'success': False,
-                    'text': '',
-                    'segments': [],
-                    'speakers': [],
-                    'speaker_count': 0,
-                    'error': f'Ошибка диаризации: {str(diarize_error)}',
-                    'error_type': type(diarize_error).__name__,
-                    'step': 'diarization'
-                }
+                segments, info = model.transcribe(temp_path, language=language)
+                print(f"✅ Транскрипция завершена, язык: {info.language}, вероятность: {info.language_probability:.2f}", file=sys.stderr)
+            except Exception as transcribe_error:
+                print(f"❌ Ошибка транскрипции: {transcribe_error}", file=sys.stderr)
+                print(f"❌ Трейсбек транскрипции: {traceback.format_exc()}", file=sys.stderr)
+                raise
             
-            # 7. Обрабатываем результаты
-            print("📊 Шаг 7: Обрабатываем результаты...", file=sys.stderr)
-            if diarize_segments:
-                # С диаризацией
-                segments_with_speakers = []
-                speakers = set()
-                full_text = ""
+            # 3. Обрабатываем результаты
+            print("📊 Шаг 3: Обрабатываем результаты...", file=sys.stderr)
+            
+            full_text = ""
+            segments_list = []
+            
+            for segment in segments:
+                text = segment.text.strip()
+                start = segment.start
+                end = segment.end
                 
-                current_speaker = None
-                current_text = ""
-                segment_start = 0
-                segment_end = 0
-                
-                for segment in result["segments"]:
-                    speaker = segment.get("speaker", "НЕИЗВЕСТНЫЙ")
-                    text = segment["text"].strip()
-                    start = segment.get("start", 0)
-                    end = segment.get("end", 0)
-                    
-                    speakers.add(speaker)
-                    
-                    # Группируем последовательные сегменты одного говорящего
-                    if speaker == current_speaker:
-                        current_text += " " + text
-                        segment_end = end
-                    else:
-                        # Сохраняем предыдущий сегмент
-                        if current_speaker is not None and current_text:
-                            segments_with_speakers.append({
-                                "speaker": current_speaker,
-                                "text": current_text.strip(),
-                                "start": segment_start,
-                                "end": segment_end
-                            })
-                            full_text += f"\n[{current_speaker}]: {current_text.strip()}"
-                        
-                        # Начинаем новый сегмент
-                        current_speaker = speaker
-                        current_text = text
-                        segment_start = start
-                        segment_end = end
-                
-                # Добавляем последний сегмент
-                if current_speaker is not None and current_text:
-                    segments_with_speakers.append({
-                        "speaker": current_speaker,
-                        "text": current_text.strip(),
-                        "start": segment_start,
-                        "end": segment_end
-                    })
-                    full_text += f"\n[{current_speaker}]: {current_text.strip()}"
-                
-                full_text = full_text.strip()
-                speakers_list = sorted(list(speakers))
-                
-                print(f"🎉 WhisperX транскрипция с диаризацией УСПЕШНО завершена!", file=sys.stderr)
-                print(f"📊 Найдено говорящих: {len(speakers_list)} ({', '.join(speakers_list)})", file=sys.stderr)
-                print(f"📝 Сегментов: {len(segments_with_speakers)}", file=sys.stderr)
-                print(f"📄 Символов: {len(full_text)}", file=sys.stderr)
-                
-                return {
-                    'success': True,
-                    'text': full_text,
-                    'segments': segments_with_speakers,
-                    'speakers': speakers_list,
-                    'speaker_count': len(speakers_list),
-                    'language': language,
-                    'error': None
-                }
-            else:
-                # Без диаризации (fallback)
-                full_text = ""
-                for segment in result["segments"]:
-                    full_text += segment["text"]
-                
-                full_text = full_text.strip()
-                
-                print(f"⚠️ WhisperX транскрипция БЕЗ диаризации завершена", file=sys.stderr)
-                print(f"📄 Символов: {len(full_text)}", file=sys.stderr)
-                
-                return {
-                    'success': True,
-                    'text': full_text,
-                    'segments': [],
-                    'speakers': [],
-                    'speaker_count': 0,
-                    'language': language,
-                    'error': None,
-                    'warning': 'Диаризация не удалась, возвращен обычный текст'
-                }
+                full_text += text + " "
+                segments_list.append({
+                    "text": text,
+                    "start": start,
+                    "end": end
+                })
+            
+            full_text = full_text.strip()
+            
+            print(f"🎉 faster-whisper транскрипция УСПЕШНО завершена!", file=sys.stderr)
+            print(f"📝 Сегментов: {len(segments_list)}", file=sys.stderr)
+            print(f"📄 Символов: {len(full_text)}", file=sys.stderr)
+            print(f"🌍 Язык: {info.language} (вероятность: {info.language_probability:.2f})", file=sys.stderr)
+            
+            return {
+                'success': True,
+                'text': full_text,
+                'segments': segments_list,
+                'speakers': [],
+                'speaker_count': 0,
+                'language': info.language,
+                'language_probability': info.language_probability,
+                'error': None,
+                'method': 'faster-whisper'
+            }
         
         finally:
             # Удаляем временный файл
             try:
                 os.unlink(temp_path)
-            except:
-                pass
+                print(f"🗑️ Временный файл удален: {temp_path}", file=sys.stderr)
+            except Exception as cleanup_error:
+                print(f"⚠️ Ошибка удаления временного файла: {cleanup_error}", file=sys.stderr)
                 
     except Exception as e:
         error_message = str(e)
-        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА WhisperX: {error_message}", file=sys.stderr)
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА faster-whisper: {error_message}", file=sys.stderr)
         print(f"❌ Тип ошибки: {type(e).__name__}", file=sys.stderr)
+        print(f"❌ Полный трейсбек: {traceback.format_exc()}", file=sys.stderr)
         return {
             'success': False,
             'text': '',
@@ -212,20 +159,30 @@ def transcribe_audio_with_diarization(audio_data, language='ru', model_size='sma
             'speakers': [],
             'speaker_count': 0,
             'error': error_message,
-            'error_type': type(e).__name__
+            'error_type': type(e).__name__,
+            'traceback': traceback.format_exc(),
+            'method': 'faster-whisper'
         }
 
 def transcribe_audio(audio_data, language='ru', model_size='small'):
     """
-    Обратная совместимость - вызывает функцию с диаризацией
+    Обратная совместимость - вызывает упрощенную функцию транскрипции
     """
-    return transcribe_audio_with_diarization(audio_data, language, model_size)
+    return transcribe_audio_simple(audio_data, language, model_size)
 
 def main():
     """
     Основная функция для вызова из Node.js
     Ожидает путь к аудио файлу как аргумент командной строки
     """
+    # Выполняем диагностику системы
+    if not diagnose_system():
+        print(json.dumps({
+            'success': False,
+            'error': 'Системная диагностика не прошла'
+        }, ensure_ascii=False))
+        sys.exit(1)
+    
     if len(sys.argv) < 2:
         print(json.dumps({
             'success': False,
@@ -246,8 +203,8 @@ def main():
         
         print(f"📦 Размер аудио файла: {len(audio_data)} байт", file=sys.stderr)
         
-        # Транскрибируем с WhisperX и диаризацией
-        result = transcribe_audio_with_diarization(audio_data, language, model_size)
+        # Транскрибируем с faster-whisper
+        result = transcribe_audio_simple(audio_data, language, model_size)
         
         # Выводим результат в JSON формате для Node.js (только в stdout)
         print(json.dumps(result, ensure_ascii=False))
@@ -255,7 +212,8 @@ def main():
     except Exception as e:
         print(json.dumps({
             'success': False,
-            'error': f'Ошибка чтения файла: {str(e)}'
+            'error': f'Ошибка чтения файла: {str(e)}',
+            'traceback': traceback.format_exc()
         }, ensure_ascii=False))
         sys.exit(1)
 

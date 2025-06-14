@@ -16,4 +16,15 @@ transformers==4.35.0
 tokenizers==0.14.1
 
 # faster-whisper (ПРОСТАЯ ТРАНСКРИПЦИЯ)
-faster-whisper==0.9.0 
+faster-whisper==0.9.0
+
+# NVIDIA NeMo для диаризации
+nemo-toolkit[asr]==1.22.0
+
+# Дополнительные зависимости для NeMo
+omegaconf==2.3.0
+hydra-core==1.3.2
+pytorch-lightning==2.1.0
+
+# Конфигурация
+huggingface_hub 

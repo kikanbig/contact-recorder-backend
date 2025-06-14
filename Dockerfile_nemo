@@ -1,0 +1,82 @@
+# Используем официальный Python образ
+FROM python:3.11-slim
+
+# Устанавливаем системные зависимости
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создаем рабочую директорию
+WORKDIR /app
+
+# Копируем файлы проекта
+COPY package*.json ./
+COPY requirements_nemo.txt ./
+COPY *.py ./
+COPY *.js ./
+COPY admin/ ./admin/
+
+# Устанавливаем Node.js зависимости
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install && \
+    rm -rf /var/lib/apt/lists/*
+
+# Обновляем pip и устанавливаем wheel
+RUN python -m pip install --upgrade pip setuptools wheel
+
+# Шаг 1: Устанавливаем PyTorch CPU
+RUN echo "🔥 Шаг 1: Установка PyTorch CPU..." && \
+    python -m pip install torch==2.1.0+cpu torchvision==0.16.0+cpu torchaudio==2.1.0+cpu -f https://download.pytorch.org/whl/torch_stable.html && \
+    python -c "import torch; print(f'✅ PyTorch {torch.__version__} установлен')"
+
+# Шаг 2: Устанавливаем базовые зависимости
+RUN echo "📦 Шаг 2: Установка базовых зависимостей..." && \
+    python -m pip install numpy==1.24.3 scipy==1.11.1 && \
+    python -c "import numpy, scipy; print('✅ NumPy и SciPy установлены')"
+
+# Шаг 3: Устанавливаем аудио библиотеки
+RUN echo "🎵 Шаг 3: Установка аудио библиотек..." && \
+    python -m pip install librosa==0.10.1 soundfile==0.12.1 && \
+    python -c "import librosa, soundfile; print('✅ Аудио библиотеки установлены')"
+
+# Шаг 4: Устанавливаем Transformers
+RUN echo "🤖 Шаг 4: Установка Transformers..." && \
+    python -m pip install transformers==4.35.0 tokenizers==0.14.1 && \
+    python -c "import transformers; print('✅ Transformers установлен')"
+
+# Шаг 5: Устанавливаем faster-whisper
+RUN echo "🎤 Шаг 5: Установка faster-whisper..." && \
+    python -m pip install faster-whisper==0.9.0 && \
+    python -c "import faster_whisper; print('✅ faster-whisper установлен')"
+
+# Шаг 6: Устанавливаем зависимости для NeMo
+RUN echo "⚙️ Шаг 6: Установка зависимостей NeMo..." && \
+    python -m pip install omegaconf==2.3.0 hydra-core==1.3.2 pytorch-lightning==2.1.0 && \
+    python -c "import omegaconf, hydra, pytorch_lightning; print('✅ Зависимости NeMo установлены')"
+
+# Шаг 7: Устанавливаем NVIDIA NeMo
+RUN echo "🚀 Шаг 7: Установка NVIDIA NeMo..." && \
+    python -m pip install nemo-toolkit[asr]==1.22.0 && \
+    python -c "import nemo; print('✅ NVIDIA NeMo установлен')"
+
+# Шаг 8: Устанавливаем дополнительные зависимости
+RUN echo "📚 Шаг 8: Установка дополнительных зависимостей..." && \
+    python -m pip install huggingface_hub && \
+    python -c "import huggingface_hub; print('✅ Дополнительные зависимости установлены')"
+
+# Шаг 9: Финальная проверка всех компонентов
+RUN echo "✅ Шаг 9: Финальная проверка компонентов..." && \
+    python -c "import sys; print('🔍 ФИНАЛЬНАЯ ДИАГНОСТИКА:'); import torch; print(f'✅ PyTorch: {torch.__version__}'); import faster_whisper; print('✅ faster-whisper: импортирован'); import nemo; print('✅ NVIDIA NeMo: импортирован'); import librosa; print(f'✅ librosa: {librosa.__version__}'); print('🎉 Диагностика завершена!')"
+
+# Создаем директории для загрузок и записей
+RUN mkdir -p uploads records
+
+# Открываем порт
+EXPOSE 3000
+
+# Запускаем сервер
+CMD ["node", "server.js"] 
