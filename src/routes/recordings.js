@@ -562,13 +562,131 @@ router.post('/:id/transcribe-text', authenticateToken, requireAdmin, async (req,
   }
 });
 
-// Функция для вызова локального Whisper
+// POST /api/recordings/:id/transcribe-whisperx - WhisperX транскрипция с диаризацией спикеров (только для администраторов)
+router.post('/:id/transcribe-whisperx', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const recording = await db.getRecordingById(req.params.id);
+    
+    if (!recording) {
+      return res.status(404).json({
+        success: false,
+        message: 'Запись не найдена'
+      });
+    }
+
+    if (recording.transcription) {
+      return res.json({
+        success: true,
+        message: 'Запись уже транскрибирована',
+        transcription: recording.transcription,
+        transcribed_at: recording.transcribed_at
+      });
+    }
+
+    if (!recording.audio_data) {
+      return res.status(400).json({
+        success: false,
+        message: 'Аудио данные не найдены'
+      });
+    }
+
+    // Получаем параметры из request body
+    const selectedModel = req.body?.model || 'small';
+    const hfToken = req.body?.hf_token || process.env.HUGGINGFACE_TOKEN || null;
+    
+    console.log('🚀 Начинаем WhisperX транскрипцию с диаризацией для записи ID:', req.params.id, 'модель:', selectedModel);
+
+    // Создаем временный файл для WhisperX
+    const tempFilePath = path.join('uploads', `temp_whisperx_${recording.id}_${Date.now()}.m4a`);
+    fs.writeFileSync(tempFilePath, recording.audio_data);
+
+    try {
+      // Выполняем транскрипцию через WhisperX с диаризацией
+      const result = await transcribeWithWhisperX(tempFilePath, 'ru', selectedModel, hfToken);
+
+      console.log('✅ WhisperX транскрипция завершена для записи ID:', req.params.id);
+
+      // Сохраняем полную транскрипцию
+      const fullTranscription = result.text;
+      
+      // Создаём расширенные метаданные с информацией о спикерах
+      const metadata = {
+        transcription_method: 'whisperx',
+        model_used: result.model_used,
+        device: result.device,
+        language: result.language,
+        speakers: result.speakers,
+        seller_text: result.seller_text,
+        client_text: result.client_text,
+        segments: result.segments,
+        transcribed_at: new Date().toISOString()
+      };
+
+      // Обновляем запись в базе данных
+      const updatedRecording = await db.updateRecordingTranscription(req.params.id, fullTranscription);
+      
+      // Сохраняем метаданные (если есть поле metadata в БД)
+      try {
+        await db.updateRecordingMetadata(req.params.id, metadata);
+      } catch (metaError) {
+        console.warn('⚠️ Не удалось сохранить метаданные:', metaError.message);
+      }
+
+      // Удаляем временный файл
+      fs.unlink(tempFilePath, (err) => {
+        if (err) console.error('Ошибка удаления временного файла:', err);
+      });
+
+      res.json({
+        success: true,
+        message: 'WhisperX транскрипция с диаризацией завершена',
+        transcription: fullTranscription,
+        transcribed_at: updatedRecording.transcribed_at,
+        speakers: result.speakers,
+        seller_text: result.seller_text,
+        client_text: result.client_text,
+        metadata: metadata
+      });
+
+    } catch (transcriptionError) {
+      // Удаляем временный файл в случае ошибки
+      fs.unlink(tempFilePath, (err) => {
+        if (err) console.error('Ошибка удаления временного файла:', err);
+      });
+      throw transcriptionError;
+    }
+
+  } catch (error) {
+    console.error('Ошибка WhisperX транскрипции:', error);
+    
+    // Определяем тип ошибки для пользователя
+    let userMessage = 'Ошибка выполнения WhisperX транскрипции';
+    
+    if (error.message.includes('python')) {
+      userMessage = 'Python не найден на сервере. Обратитесь к администратору.';
+    } else if (error.message.includes('whisperx')) {
+      userMessage = 'WhisperX не установлен. Обратитесь к администратору.';
+    } else if (error.message.includes('HuggingFace')) {
+      userMessage = 'Проблема с HuggingFace токеном для диаризации. Проверьте настройки.';
+    } else if (error.message.includes('memory') || error.message.includes('CUDA')) {
+      userMessage = 'Недостаточно ресурсов сервера для WhisperX. Попробуйте позже.';
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: userMessage,
+      technical_error: error.message
+    });
+  }
+});
+
+// Функция для вызова локального Whisper (Faster-Whisper)
 async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelSize = 'small') {
   return new Promise((resolve, reject) => {
     const { spawn } = require('child_process');
     
     const scriptPath = path.join(__dirname, '..', '..', 'transcription_service.py');
-    console.log(`🔍 Запуск транскрипции: ${scriptPath}`);
+    console.log(`🔍 Запуск Faster-Whisper транскрипции: ${scriptPath}`);
     console.log(`📁 Аудио файл: ${audioFilePath}`);
     console.log(`🌍 Язык: ${language}, Модель: ${modelSize}`);
     
@@ -646,10 +764,10 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
         const result = JSON.parse(jsonOutput);
         
         if (result.success) {
-          console.log(`✅ Транскрипция успешна: ${result.text.substring(0, 100)}...`);
+          console.log(`✅ Faster-Whisper транскрипция успешна: ${result.text.substring(0, 100)}...`);
           resolve(result.text);
         } else {
-          console.error(`❌ Whisper вернул ошибку: ${result.error}`);
+          console.error(`❌ Faster-Whisper вернул ошибку: ${result.error}`);
           reject(new Error(result.error || 'Неизвестная ошибка транскрипции'));
         }
       } catch (parseError) {
@@ -658,7 +776,7 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
         
         // Если JSON не парсится, возможно это не JSON вывод
         if (stdout.trim()) {
-          reject(new Error(`Некорректный ответ от Whisper. Ожидался JSON, получено: ${stdout.substring(0, 200)}`));
+          reject(new Error(`Некорректный ответ от Faster-Whisper. Ожидался JSON, получено: ${stdout.substring(0, 200)}`));
         } else {
           reject(new Error(`Python скрипт не вернул данных. Stderr: ${stderr}`));
         }
@@ -682,6 +800,130 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
         reject(new Error('Транскрипция прервана по таймауту (5 минут)'));
       }
     }, 5 * 60 * 1000);
+  });
+}
+
+// Функция для вызова WhisperX с диаризацией спикеров
+async function transcribeWithWhisperX(audioFilePath, language = 'ru', modelSize = 'small', hfToken = null) {
+  return new Promise((resolve, reject) => {
+    const { spawn } = require('child_process');
+    
+    const scriptPath = path.join(__dirname, '..', '..', 'whisperx_service.py');
+    console.log(`🚀 Запуск WhisperX с диаризацией: ${scriptPath}`);
+    console.log(`📁 Аудио файл: ${audioFilePath}`);
+    console.log(`🌍 Язык: ${language}, Модель: ${modelSize}`);
+    console.log(`🔑 HF токен: ${hfToken ? 'Есть' : 'Нет'}`);
+    
+    // Проверяем существование файлов
+    if (!fs.existsSync(scriptPath)) {
+      reject(new Error(`WhisperX скрипт не найден: ${scriptPath}`));
+      return;
+    }
+    
+    if (!fs.existsSync(audioFilePath)) {
+      reject(new Error(`Аудио файл не найден: ${audioFilePath}`));
+      return;
+    }
+    
+    // Аргументы для WhisperX
+    const args = [scriptPath, audioFilePath, language, modelSize];
+    if (hfToken) {
+      args.push(hfToken);
+    }
+    
+    // Вызываем Python скрипт для транскрипции с диаризацией
+    const pythonProcess = spawn('python3', args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, PYTHONUNBUFFERED: '1' }
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    pythonProcess.stdout.on('data', (data) => {
+      const output = data.toString();
+      stdout += output;
+      console.log('🚀 WhisperX stdout:', output);
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      stderr += output;
+      console.log('🚀 WhisperX stderr:', output);
+    });
+
+    pythonProcess.on('close', (code) => {
+      console.log(`🏁 WhisperX процесс завершён с кодом: ${code}`);
+      console.log(`📤 Полный stdout: ${stdout}`);
+      console.log(`📤 Полный stderr: ${stderr}`);
+      
+      if (code !== 0) {
+        console.error('❌ Ошибка WhisperX процесса:', stderr);
+        
+        // Детальный анализ ошибок
+        let errorMessage = `WhisperX процесс завершился с кодом ${code}`;
+        
+        if (stderr.includes('ModuleNotFoundError: No module named \'whisperx\'')) {
+          errorMessage = 'Модуль WhisperX не установлен на сервере';
+        } else if (stderr.includes('ModuleNotFoundError')) {
+          errorMessage = 'Отсутствуют Python зависимости для WhisperX: ' + stderr;
+        } else if (stderr.includes('CUDA')) {
+          errorMessage = 'Проблема с CUDA/GPU для WhisperX: ' + stderr;
+        } else if (stderr.includes('HuggingFace')) {
+          errorMessage = 'Проблема с HuggingFace токеном для диаризации: ' + stderr;
+        } else {
+          errorMessage += ': ' + stderr;
+        }
+        
+        reject(new Error(errorMessage));
+        return;
+      }
+
+      try {
+        // Парсим JSON ответ от WhisperX скрипта
+        const jsonOutput = stdout.trim();
+        console.log(`📋 Попытка парсинга WhisperX JSON: ${jsonOutput}`);
+        
+        const result = JSON.parse(jsonOutput);
+        
+        if (result.success) {
+          console.log(`✅ WhisperX транскрипция успешна: ${result.text.substring(0, 100)}...`);
+          console.log(`👥 Спикеров обнаружено: ${result.speakers?.total_speakers || 'неизвестно'}`);
+          resolve(result);
+        } else {
+          console.error(`❌ WhisperX вернул ошибку: ${result.error}`);
+          reject(new Error(result.error || 'Неизвестная ошибка WhisperX'));
+        }
+      } catch (parseError) {
+        console.error('❌ Ошибка парсинга WhisperX JSON ответа:', parseError);
+        console.error('🔍 Сырой вывод WhisperX:', stdout);
+        
+        // Если JSON не парсится, возможно это не JSON вывод
+        if (stdout.trim()) {
+          reject(new Error(`Некорректный ответ от WhisperX. Ожидался JSON, получено: ${stdout.substring(0, 200)}`));
+        } else {
+          reject(new Error(`WhisperX скрипт не вернул данных. Stderr: ${stderr}`));
+        }
+      }
+    });
+
+    pythonProcess.on('error', (error) => {
+      console.error('❌ Ошибка запуска WhisperX процесса:', error);
+      
+      if (error.code === 'ENOENT') {
+        reject(new Error('Python3 не найден на сервере для WhisperX. Проверьте установку Python.'));
+      } else {
+        reject(new Error(`Ошибка запуска WhisperX: ${error.message}`));
+      }
+    });
+    
+    // Увеличенный таймаут для WhisperX (может быть медленнее при первом запуске)
+    setTimeout(() => {
+      if (!pythonProcess.killed) {
+        pythonProcess.kill('SIGTERM');
+        reject(new Error('WhisperX транскрипция прервана по таймауту (10 минут)'));
+      }
+    }, 10 * 60 * 1000);
   });
 }
 

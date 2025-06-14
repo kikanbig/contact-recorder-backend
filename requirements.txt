@@ -1,5 +1,8 @@
 faster-whisper
+whisperx
 torch
 torchaudio
 ffmpeg-python
-numpy 
+numpy
+pyannote.audio
+speechbrain 
