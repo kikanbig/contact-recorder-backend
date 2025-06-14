@@ -31,7 +31,8 @@ RUN npm ci --only=production
 # Копируем Python requirements и устанавливаем зависимости
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
+# Принудительно переустанавливаем все зависимости для решения конфликтов версий
+RUN python3 -m pip install --no-cache-dir --force-reinstall -r requirements.txt
 
 # Копируем исходный код приложения
 COPY . .

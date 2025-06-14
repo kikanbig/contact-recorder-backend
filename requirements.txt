@@ -8,6 +8,4 @@ speechbrain>=0.5.0
 transformers>=4.21.0
 accelerate
 librosa
-soundfile
-# Принудительная переустановка для Railway
---force-reinstall 
+soundfile 
