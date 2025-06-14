@@ -687,7 +687,7 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
     const { spawn } = require('child_process');
     
     const scriptPath = path.join(__dirname, '..', '..', 'transcription_service.py');
-    console.log(`🔍 Запуск WhisperX транскрипции с диаризацией: ${scriptPath}`);
+    console.log(`🔍 Запуск упрощенной WhisperX транскрипции: ${scriptPath}`);
     console.log(`📁 Аудио файл: ${audioFilePath}`);
     console.log(`🌍 Язык: ${language}, Модель: ${modelSize}`);
     
@@ -734,27 +734,17 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
       console.log(`📤 Полный stderr: ${stderr}`);
       
       if (code !== 0) {
-        console.error('❌ Ошибка WhisperX с диаризацией:', stderr);
+        console.error('❌ Ошибка упрощенной WhisperX транскрипции:', stderr);
         
-        // Если ошибка связана с pyannote.audio, пробуем fallback без диаризации
-        if (stderr.includes('pyannote') || stderr.includes('DiarizationPipeline') || stderr.includes('Model was trained')) {
-          console.log('🔄 Пробуем fallback без диаризации...');
-          
-          // Вызываем упрощенную версию без диаризации
-          const fallbackScriptPath = path.join(__dirname, '..', '..', 'transcription_service_simple.py');
-          
-          if (fs.existsSync(fallbackScriptPath)) {
-            transcribeWithFallback(fallbackScriptPath, audioFilePath, language, modelSize)
-              .then(resolve)
-              .catch(reject);
-            return;
-          }
-        }
+        // Логируем ошибку без fallback (основной скрипт уже упрощен)
+        console.log('❌ Ошибка транскрипции, fallback не требуется - основной скрипт уже упрощен');
         
         // Детальный анализ ошибок
         let errorMessage = `WhisperX процесс завершился с кодом ${code}`;
         
-        if (stderr.includes('ModuleNotFoundError: No module named \'whisperx\'')) {
+        if (stderr.includes('Python не найден') || stderr.includes('python3: command not found')) {
+          errorMessage = 'Python не найден на сервере. Обратитесь к администратору.';
+        } else if (stderr.includes('ModuleNotFoundError: No module named \'whisperx\'')) {
           errorMessage = 'Модуль WhisperX не установлен на сервере';
         } else if (stderr.includes('ModuleNotFoundError')) {
           errorMessage = 'Отсутствуют Python зависимости: ' + stderr;
@@ -780,18 +770,11 @@ async function transcribeWithLocalWhisper(audioFilePath, language = 'ru', modelS
         const result = JSON.parse(jsonOutput);
         
         if (result.success) {
-          console.log(`✅ WhisperX транскрипция успешна: ${result.text.substring(0, 100)}...`);
-          if (result.speakers && result.segments) {
-            console.log(`👥 Найдено говорящих: ${result.speaker_count} (${result.speakers.join(', ')})`);
-            console.log(`📝 Сегментов диалога: ${result.segments.length}`);
-            // Сохраняем полный JSON результат с диаризацией
-            resolve(JSON.stringify(result));
-          } else {
-            // Обычная транскрипция без диаризации
-            resolve(result.text);
-          }
+          console.log(`✅ Упрощенная WhisperX транскрипция успешна: ${result.text.substring(0, 100)}...`);
+          // Всегда возвращаем обычный текст (без диаризации)
+          resolve(result.text);
         } else {
-          console.error(`❌ WhisperX вернул ошибку: ${result.error}`);
+          console.error(`❌ Упрощенная WhisperX вернула ошибку: ${result.error}`);
           reject(new Error(result.error || 'Неизвестная ошибка транскрипции'));
         }
       } catch (parseError) {
