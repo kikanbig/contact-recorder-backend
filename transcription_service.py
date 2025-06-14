@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-Локальный сервис транскрипции через OpenAI Whisper
-Обрабатывает аудио файлы без интернет соединения
+Быстрый сервис транскрипции через Faster-Whisper
+Обрабатывает аудио файлы без интернет соединения с ускорением до 4x
 """
 
 import sys
 import os
 import json
-import whisper
 import tempfile
 from pathlib import Path
+from faster_whisper import WhisperModel
 
 def transcribe_audio(audio_data, language='ru', model_size='small'):
     """
-    Транскрибирует аудио данные через локальный Whisper
+    Транскрибирует аудио данные через Faster-Whisper
     
     Args:
         audio_data: Бинарные данные аудио файла
@@ -24,12 +24,17 @@ def transcribe_audio(audio_data, language='ru', model_size='small'):
         dict: {'success': bool, 'text': str, 'error': str}
     """
     try:
-        print(f"🤖 Загружаем модель Whisper: {model_size}", file=sys.stderr)
+        print(f"🚀 Загружаем Faster-Whisper модель: {model_size}", file=sys.stderr)
         
-        # Загружаем модель Whisper (скачается автоматически при первом запуске)
-        model = whisper.load_model(model_size)
+        # Загружаем модель Faster-Whisper (автоматически оптимизируется)
+        # compute_type="int8" для экономии памяти и ускорения
+        model = WhisperModel(
+            model_size, 
+            device="cpu",  # Используем CPU (можно "cuda" если есть GPU)
+            compute_type="int8"  # Квантизация для ускорения
+        )
         
-        print(f"✅ Модель {model_size} загружена", file=sys.stderr)
+        print(f"✅ Faster-Whisper модель {model_size} загружена", file=sys.stderr)
         
         # Создаем временный файл для аудио
         with tempfile.NamedTemporaryFile(suffix='.m4a', delete=False) as temp_file:
@@ -39,22 +44,33 @@ def transcribe_audio(audio_data, language='ru', model_size='small'):
         try:
             print(f"🎵 Транскрибируем аудио файл: {temp_path}", file=sys.stderr)
             
-            # Выполняем транскрипцию
-            result = model.transcribe(
+            # Выполняем транскрипцию с Faster-Whisper
+            segments, info = model.transcribe(
                 temp_path,
                 language=language,
-                fp16=False,  # Отключаем FP16 для совместимости
-                verbose=False
+                beam_size=1,  # Уменьшаем для ускорения (по умолчанию 5)
+                best_of=1,    # Уменьшаем для ускорения (по умолчанию 5)
+                temperature=0.0,  # Детерминированный результат
+                vad_filter=True,  # Фильтр голосовой активности для ускорения
+                vad_parameters=dict(min_silence_duration_ms=500)
             )
             
-            transcription_text = result['text'].strip()
+            # Собираем текст из сегментов
+            transcription_text = ""
+            for segment in segments:
+                transcription_text += segment.text
             
-            print(f"✅ Транскрипция завершена: {len(transcription_text)} символов", file=sys.stderr)
+            transcription_text = transcription_text.strip()
+            
+            print(f"✅ Faster-Whisper транскрипция завершена: {len(transcription_text)} символов", file=sys.stderr)
+            print(f"📊 Обнаруженный язык: {info.language} (вероятность: {info.language_probability:.2f})", file=sys.stderr)
             
             return {
                 'success': True,
                 'text': transcription_text,
-                'language': result.get('language', language),
+                'language': info.language,
+                'language_probability': info.language_probability,
+                'duration': info.duration,
                 'error': None
             }
         
@@ -67,7 +83,7 @@ def transcribe_audio(audio_data, language='ru', model_size='small'):
                 
     except Exception as e:
         error_message = str(e)
-        print(f"❌ Ошибка транскрипции: {error_message}", file=sys.stderr)
+        print(f"❌ Ошибка Faster-Whisper транскрипции: {error_message}", file=sys.stderr)
         return {
             'success': False,
             'text': '',
@@ -99,7 +115,7 @@ def main():
         
         print(f"📦 Размер аудио файла: {len(audio_data)} байт", file=sys.stderr)
         
-        # Транскрибируем
+        # Транскрибируем с Faster-Whisper
         result = transcribe_audio(audio_data, language, model_size)
         
         # Выводим результат в JSON формате для Node.js (только в stdout)
