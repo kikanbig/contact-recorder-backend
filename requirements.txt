@@ -3,9 +3,11 @@ torch>=1.12.0
 torchaudio>=0.12.0
 ffmpeg-python
 numpy
-pyannote.audio>=3.1.0
+pyannote.audio==3.1.1
 speechbrain>=0.5.0
 transformers>=4.21.0
 accelerate
 librosa
-soundfile 
+soundfile
+# Принудительная переустановка для Railway
+--force-reinstall 
