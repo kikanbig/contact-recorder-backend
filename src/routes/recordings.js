@@ -641,6 +641,7 @@ router.post('/:id/transcribe-whisperx', authenticateToken, requireAdmin, async (
         success: true,
         message: 'WhisperX транскрипция с диаризацией завершена',
         transcription: fullTranscription,
+        dialogue: result.dialogue,
         transcribed_at: updatedRecording.transcribed_at,
         speakers: result.speakers,
         seller_text: result.seller_text,

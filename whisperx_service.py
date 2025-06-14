@@ -25,6 +25,60 @@ except ImportError as e:
     }, ensure_ascii=False))
     sys.exit(1)
 
+def format_dialogue(segments, speakers_info):
+    """
+    Форматирует сегменты в диалог с указанием спикеров
+    
+    Args:
+        segments: Список сегментов с информацией о спикерах
+        speakers_info: Информация о спикерах
+    
+    Returns:
+        str: Отформатированный диалог
+    """
+    if not segments or not speakers_info:
+        return ""
+    
+    dialogue_lines = []
+    current_speaker = None
+    current_text = ""
+    
+    # Определяем роли спикеров
+    seller_id = speakers_info.get("seller")
+    client_id = speakers_info.get("client")
+    
+    for segment in segments:
+        speaker = segment.get("speaker")
+        text = segment.get("text", "").strip()
+        
+        if not text:
+            continue
+            
+        # Определяем роль спикера
+        if speaker == seller_id:
+            speaker_role = "Продавец"
+        elif speaker == client_id:
+            speaker_role = "Клиент"
+        elif speaker:
+            speaker_role = f"Спикер {speaker}"
+        else:
+            speaker_role = "Неизвестный"
+        
+        # Если спикер сменился, сохраняем предыдущую реплику
+        if current_speaker and current_speaker != speaker_role and current_text:
+            dialogue_lines.append(f"{current_speaker}: {current_text.strip()}")
+            current_text = ""
+        
+        # Обновляем текущего спикера и добавляем текст
+        current_speaker = speaker_role
+        current_text += " " + text
+    
+    # Добавляем последнюю реплику
+    if current_speaker and current_text:
+        dialogue_lines.append(f"{current_speaker}: {current_text.strip()}")
+    
+    return "\n\n".join(dialogue_lines)
+
 def transcribe_with_speaker_diarization(audio_data, language='ru', model_size='small', hf_token=None):
     """
     Транскрибирует аудио с разделением спикеров через WhisperX
@@ -175,13 +229,18 @@ def transcribe_with_speaker_diarization(audio_data, language='ru', model_size='s
             seller_text = seller_text.strip()
             client_text = client_text.strip()
             
+            # 6. Создаём диалог в формате "Продавец: ... Клиент: ..."
+            dialogue_text = format_dialogue(segments_with_speakers, speakers_info)
+            
             print(f"✅ WhisperX транскрипция завершена: {len(full_text)} символов", file=sys.stderr)
             print(f"👤 Продавец: {len(seller_text)} символов", file=sys.stderr)
             print(f"🛒 Клиент: {len(client_text)} символов", file=sys.stderr)
+            print(f"💬 Диалог: {len(dialogue_text)} символов", file=sys.stderr)
             
             return {
                 'success': True,
                 'text': full_text,
+                'dialogue': dialogue_text,
                 'seller_text': seller_text,
                 'client_text': client_text,
                 'speakers': speakers_info,
@@ -205,6 +264,7 @@ def transcribe_with_speaker_diarization(audio_data, language='ru', model_size='s
         return {
             'success': False,
             'text': '',
+            'dialogue': '',
             'seller_text': '',
             'client_text': '',
             'speakers': {},
