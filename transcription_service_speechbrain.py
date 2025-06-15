@@ -301,12 +301,19 @@ def combine_transcription_and_diarization(whisper_result, speechbrain_result):
             'words': w_seg.get('words', [])
         })
     
-    # Группируем соседние сегменты одного говорящего
+    # Группируем соседние сегменты одного говорящего с учетом пауз
     grouped_segments = []
     current_group = None
+    max_pause_duration = 2.0  # Максимальная пауза для объединения сегментов (секунды)
     
     for segment in combined_segments:
-        if current_group is None or current_group['speaker'] != segment['speaker']:
+        should_start_new_group = (
+            current_group is None or 
+            current_group['speaker'] != segment['speaker'] or
+            (segment['start'] - current_group['end']) > max_pause_duration
+        )
+        
+        if should_start_new_group:
             if current_group:
                 grouped_segments.append(current_group)
             current_group = {
@@ -316,11 +323,44 @@ def combine_transcription_and_diarization(whisper_result, speechbrain_result):
                 'speaker': segment['speaker']
             }
         else:
+            # Объединяем только если это тот же говорящий и пауза небольшая
             current_group['end'] = segment['end']
             current_group['text'] += ' ' + segment['text']
     
     if current_group:
         grouped_segments.append(current_group)
+    
+    # Дополнительная фильтрация: разделяем слишком длинные сегменты
+    final_segments = []
+    max_segment_duration = 30.0  # Максимальная длительность одного сегмента
+    
+    for segment in grouped_segments:
+        duration = segment['end'] - segment['start']
+        if duration > max_segment_duration:
+            # Разбиваем длинный сегмент на части
+            words = segment['text'].split()
+            if len(words) > 10:  # Только если достаточно слов для разбиения
+                mid_point = len(words) // 2
+                mid_time = segment['start'] + duration / 2
+                
+                final_segments.append({
+                    'start': segment['start'],
+                    'end': mid_time,
+                    'text': ' '.join(words[:mid_point]),
+                    'speaker': segment['speaker']
+                })
+                final_segments.append({
+                    'start': mid_time,
+                    'end': segment['end'],
+                    'text': ' '.join(words[mid_point:]),
+                    'speaker': segment['speaker']
+                })
+            else:
+                final_segments.append(segment)
+        else:
+            final_segments.append(segment)
+    
+    grouped_segments = final_segments
     
     print(f"✅ Объединение завершено", file=sys.stderr)
     print(f"   🎯 Итоговых сегментов: {len(grouped_segments)}", file=sys.stderr)

@@ -343,6 +343,35 @@
             font-weight: 400;
         }
 
+        .dialog-stats {
+            background: var(--bg-main);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid var(--color-border);
+        }
+
+        .dialog-stats h4 {
+            color: var(--color-accent);
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+
+        .speaker-stats {
+            background: rgba(99, 102, 241, 0.1);
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: var(--color-text);
+            border-left: 3px solid var(--color-primary);
+        }
+
+        .segment-text {
+            line-height: 1.6;
+            font-size: 15px;
+        }
+
         .loading {
             text-align: center;
             padding: 60px 20px;
@@ -729,7 +758,16 @@
         async function transcribeRecord(recordId) {
             const model = document.getElementById('modelSelect').value;
             
+            // Находим кнопку и меняем её состояние
+            const button = document.querySelector(`button[onclick="transcribeRecord('${recordId}')"]`);
+            const originalText = button.innerHTML;
+            
             try {
+                // Меняем состояние кнопки
+                button.innerHTML = '⏳ Транскрибируется...';
+                button.disabled = true;
+                button.style.opacity = '0.7';
+                
                 const response = await fetch(`/api/records/${recordId}/transcribe`, {
                     method: 'POST',
                     headers: {
@@ -744,12 +782,24 @@
                 }
 
                 const result = await response.json();
-                alert('✅ Транскрипция завершена успешно!');
+                
+                // Показываем результат
+                if (result.segments && result.segments.length > 0) {
+                    alert(`✅ Транскрипция завершена!\n👥 Найдено спикеров: ${result.speaker_count}\n📝 Сегментов диалога: ${result.segments.length}`);
+                } else {
+                    alert('✅ Транскрипция завершена успешно!');
+                }
+                
                 await loadRecords();
                 
             } catch (error) {
                 console.error('Ошибка транскрипции:', error);
                 alert(`❌ Ошибка транскрипции: ${error.message}`);
+                
+                // Восстанавливаем кнопку при ошибке
+                button.innerHTML = originalText;
+                button.disabled = false;
+                button.style.opacity = '1';
             }
         }
 
@@ -762,17 +812,47 @@
             }
 
             const model = document.getElementById('modelSelect').value;
+            const button = document.querySelector('button[onclick="transcribeSelected()"]');
+            const originalText = button.innerHTML;
             
-            for (const recordId of selectedRecords) {
-                try {
-                    await transcribeRecord(recordId);
-                } catch (error) {
-                    console.error(`Ошибка транскрипции записи ${recordId}:`, error);
+            try {
+                button.innerHTML = `⏳ Транскрибируется ${selectedRecords.size} записей...`;
+                button.disabled = true;
+                button.style.opacity = '0.7';
+                
+                let completed = 0;
+                for (const recordId of selectedRecords) {
+                    try {
+                        completed++;
+                        button.innerHTML = `⏳ Транскрибируется ${completed}/${selectedRecords.size}...`;
+                        
+                        const response = await fetch(`/api/records/${recordId}/transcribe`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ model: model })
+                        });
+
+                        if (!response.ok) {
+                            const error = await response.json();
+                            console.error(`Ошибка транскрипции записи ${recordId}:`, error.message);
+                        }
+                    } catch (error) {
+                        console.error(`Ошибка транскрипции записи ${recordId}:`, error);
+                    }
                 }
+                
+                alert(`✅ Массовая транскрипция завершена!\nОбработано записей: ${completed}`);
+                await loadRecords();
+                
+            } finally {
+                button.innerHTML = originalText;
+                button.disabled = false;
+                button.style.opacity = '1';
+                selectedRecords.clear();
+                updateBulkActions();
             }
-            
-            selectedRecords.clear();
-            updateBulkActions();
         }
 
         // Просмотр транскрипции
@@ -790,22 +870,60 @@
             
             if (record.segments && record.segments.length > 0) {
                 // Отображение с диаризацией
+                const speakerColors = {};
+                let colorIndex = 0;
+                
                 contentHTML = record.segments.map((segment, index) => {
-                    const speakerClass = `speaker-${String.fromCharCode(97 + (index % 3))}`;
+                    // Назначаем цвет для каждого уникального говорящего
+                    if (!speakerColors[segment.speaker]) {
+                        speakerColors[segment.speaker] = String.fromCharCode(97 + (colorIndex % 3));
+                        colorIndex++;
+                    }
+                    
+                    const speakerClass = `speaker-${speakerColors[segment.speaker]}`;
+                    const speakerName = segment.speaker.replace('SPEAKER_', 'Говорящий ');
+                    const duration = segment.end - segment.start;
+                    
                     return `
                         <div class="speaker-segment ${speakerClass}">
                             <div class="speaker-label">
-                                ${segment.speaker || `Говорящий ${index + 1}`}
-                                ${segment.start ? `<span class="timestamp">${formatTime(segment.start)} - ${formatTime(segment.end)}</span>` : ''}
+                                🎤 ${speakerName}
+                                <span class="timestamp">${formatTime(segment.start)} - ${formatTime(segment.end)} (${duration.toFixed(1)}с)</span>
                             </div>
-                            <div>${segment.text}</div>
+                            <div class="segment-text">${segment.text}</div>
                         </div>
                     `;
                 }).join('');
+                
+                // Добавляем статистику диалога
+                const speakers = [...new Set(record.segments.map(s => s.speaker))];
+                const stats = speakers.map(speaker => {
+                    const speakerSegments = record.segments.filter(s => s.speaker === speaker);
+                    const totalDuration = speakerSegments.reduce((sum, s) => sum + (s.end - s.start), 0);
+                    const wordCount = speakerSegments.reduce((sum, s) => sum + s.text.split(' ').length, 0);
+                    
+                    return `
+                        <div class="speaker-stats">
+                            🎤 ${speaker.replace('SPEAKER_', 'Говорящий ')}: 
+                            ${speakerSegments.length} сегментов, 
+                            ${totalDuration.toFixed(1)}с речи, 
+                            ~${wordCount} слов
+                        </div>
+                    `;
+                }).join('');
+                
+                contentHTML = `
+                    <div class="dialog-stats">
+                        <h4>📊 Статистика диалога:</h4>
+                        ${stats}
+                        <hr style="margin: 15px 0; border: 1px solid var(--color-border);">
+                    </div>
+                    ${contentHTML}
+                `;
             } else {
                 // Простой текст без диаризации
                 contentHTML = `<div class="speaker-segment speaker-a">
-                    <div class="speaker-label">Транскрипция</div>
+                    <div class="speaker-label">📝 Транскрипция (без диаризации)</div>
                     <div>${record.text || 'Нет текста'}</div>
                 </div>`;
             }
