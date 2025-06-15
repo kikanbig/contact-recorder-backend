@@ -14,14 +14,11 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Статические файлы
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
-// Настройка multer для загрузки файлов
+// Настройка multer для загрузки файлов в персистентную директорию
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    const uploadDir = 'uploads';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
+    ensureDirectories();
+    cb(null, UPLOADS_DIR);
   },
   filename: function (req, file, cb) {
     const timestamp = Date.now();
@@ -37,28 +34,53 @@ const upload = multer({
   }
 });
 
-// База данных в памяти (JSON файл)
-const DB_FILE = 'recordings.json';
+// Персистентное хранилище данных
+const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || '/app/data';
+const DB_FILE = path.join(DATA_DIR, 'recordings.json');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+
+// Создаем директории если их нет
+function ensureDirectories() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      console.log('📁 Создана директория данных:', DATA_DIR);
+    }
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+      console.log('📁 Создана директория загрузок:', UPLOADS_DIR);
+    }
+  } catch (error) {
+    console.error('❌ Ошибка создания директорий:', error);
+  }
+}
 
 // Функции для работы с базой данных
 function loadDatabase() {
   try {
+    ensureDirectories();
     if (fs.existsSync(DB_FILE)) {
       const data = fs.readFileSync(DB_FILE, 'utf8');
-      return JSON.parse(data);
+      const records = JSON.parse(data);
+      console.log(`📊 Загружено записей из базы: ${records.length}`);
+      return records;
+    } else {
+      console.log('📊 База данных не найдена, создаем новую');
     }
   } catch (error) {
-    console.error('Ошибка загрузки базы данных:', error);
+    console.error('❌ Ошибка загрузки базы данных:', error);
   }
   return [];
 }
 
 function saveDatabase(records) {
   try {
+    ensureDirectories();
     fs.writeFileSync(DB_FILE, JSON.stringify(records, null, 2));
+    console.log(`💾 Сохранено записей в базу: ${records.length}`);
     return true;
   } catch (error) {
-    console.error('Ошибка сохранения базы данных:', error);
+    console.error('❌ Ошибка сохранения базы данных:', error);
     return false;
   }
 }
@@ -68,7 +90,7 @@ app.get('/', (req, res) => {
   res.send(`
     <html>
       <head>
-        <title>21 Век - Система транскрипции v3.2.0</title>
+        <title>21 Век - Система транскрипции v3.2.1</title>
         <style>
           body { 
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -113,7 +135,7 @@ app.get('/', (req, res) => {
       <body>
         <div class="container">
           <h1>🎤 21 Век</h1>
-          <div class="subtitle">Система транскрипции аудио с диаризацией v3.2.0</div>
+          <div class="subtitle">Система транскрипции аудио с диаризацией v3.2.1</div>
           
           <div class="features">
             <div class="feature">
@@ -153,10 +175,20 @@ app.get('/', (req, res) => {
 
 // Проверка здоровья системы
 app.get('/health', async (req, res) => {
+  const records = loadDatabase();
   const health = {
     status: 'OK',
     timestamp: new Date().toISOString(),
-    version: '3.2.0',
+    version: '3.2.1',
+    storage: {
+      type: 'Railway Volume',
+      data_dir: DATA_DIR,
+      db_file: DB_FILE,
+      uploads_dir: UPLOADS_DIR,
+      records_count: records.length,
+      db_exists: fs.existsSync(DB_FILE),
+      uploads_exists: fs.existsSync(UPLOADS_DIR)
+    },
     services: {
       database: 'OK',
       python: 'Checking...',
@@ -557,6 +589,7 @@ function runCommand(command, args) {
 
 // Запуск сервера
 app.listen(PORT, '0.0.0.0', () => {
+  const records = loadDatabase();
   console.log(`
 🚀 Сервер запущен на порту ${PORT}
 
@@ -570,12 +603,20 @@ app.listen(PORT, '0.0.0.0', () => {
    📋 Записи: GET http://0.0.0.0:${PORT}/api/records
    🎤 Транскрипция: POST http://0.0.0.0:${PORT}/api/records/:id/transcribe
 
-🎯 Особенности v3.2.0:
+💾 ПЕРСИСТЕНТНОЕ ХРАНИЛИЩЕ:
+   📁 Директория данных: ${DATA_DIR}
+   📊 База данных: ${DB_FILE}
+   📂 Загрузки: ${UPLOADS_DIR}
+   📈 Записей в базе: ${records.length}
+   ✅ Данные сохраняются при редеплое!
+
+🎯 Особенности v3.2.1:
    ✅ Загрузка записей БЕЗ автоматической транскрипции
    ✅ Транскрипция по требованию через админ панель
    ✅ Диаризация через SpeechBrain + pyannote.audio
    ✅ Современный черный дизайн админки
    ✅ Массовые операции с записями
+   ✅ Персистентное хранилище данных (Railway Volume)
   `);
 });
 
