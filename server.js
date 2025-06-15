@@ -135,7 +135,7 @@ app.get('/', (req, res) => {
       <body>
         <div class="container">
           <h1>🎤 21 Век</h1>
-          <div class="subtitle">Система транскрипции аудио с диаризацией v3.2.1</div>
+          <div class="subtitle">Система транскрипции аудио с диаризацией v3.3.0</div>
           
           <div class="features">
             <div class="feature">
@@ -179,7 +179,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'OK',
     timestamp: new Date().toISOString(),
-    version: '3.2.1',
+    version: '3.3.0',
     storage: {
       type: 'Railway Volume',
       data_dir: DATA_DIR,
@@ -313,9 +313,14 @@ app.get('/api/records', (req, res) => {
 app.post('/api/records/:id/transcribe', async (req, res) => {
   try {
     const recordId = req.params.id;
-    const { model = 'small' } = req.body;
+    const { 
+      model = 'small',
+      method = 'standard' // 'standard' или 'enhanced'
+    } = req.body;
 
-    console.log(`🎤 Начинаем транскрипцию записи ${recordId} с моделью ${model}`);
+    console.log(`🎤 Начинаем транскрипцию записи ${recordId}`);
+    console.log(`   🤖 Модель: ${model}`);
+    console.log(`   🎯 Метод диаризации: ${method}`);
 
     const records = loadDatabase();
     const record = records.find(r => r.id === recordId);
@@ -334,7 +339,8 @@ app.post('/api/records/:id/transcribe', async (req, res) => {
         text: record.text,
         segments: record.segments,
         speaker_count: record.speaker_count,
-        transcribed_at: record.transcribed_at
+        transcribed_at: record.transcribed_at,
+        processing_method: record.processing_method || 'unknown'
       });
     }
 
@@ -345,15 +351,16 @@ app.post('/api/records/:id/transcribe', async (req, res) => {
       });
     }
 
-    // Выполняем транскрипцию с диаризацией
+    // Выполняем транскрипцию с выбранным методом диаризации
     console.log('🔄 Запускаем транскрипцию с диаризацией...');
-    const result = await transcribeWithDiarization(record.file_path, model);
+    const result = await transcribeWithDiarization(record.file_path, model, method);
 
     // Обновляем запись в базе данных
     record.text = result.text;
     record.segments = result.segments;
     record.speaker_count = result.speaker_count;
     record.transcribed_at = new Date().toISOString();
+    record.processing_method = result.processing_method || method;
 
     saveDatabase(records);
 
@@ -365,7 +372,8 @@ app.post('/api/records/:id/transcribe', async (req, res) => {
       text: result.text,
       segments: result.segments,
       speaker_count: result.speaker_count,
-      transcribed_at: record.transcribed_at
+      transcribed_at: record.transcribed_at,
+      processing_method: record.processing_method
     });
 
   } catch (error) {
@@ -468,13 +476,19 @@ app.post('/api/records/bulk-delete', (req, res) => {
 });
 
 // Функция транскрипции с диаризацией
-async function transcribeWithDiarization(audioFilePath, model = 'small') {
+async function transcribeWithDiarization(audioFilePath, model = 'small', method = 'standard') {
   return new Promise((resolve, reject) => {
-    const scriptPath = path.join(__dirname, 'transcription_service_speechbrain.py');
+    // Выбираем скрипт в зависимости от метода
+    const scriptName = method === 'enhanced' 
+      ? 'transcription_service_enhanced.py'
+      : 'transcription_service_speechbrain.py';
     
-    console.log(`🔍 Запуск транскрипции: ${scriptPath}`);
+    const scriptPath = path.join(__dirname, scriptName);
+    
+    console.log(`🔍 Запуск транскрипции: ${scriptName}`);
     console.log(`📁 Аудио файл: ${audioFilePath}`);
     console.log(`🤖 Модель: ${model}`);
+    console.log(`🎯 Метод: ${method}`);
     
     if (!fs.existsSync(scriptPath)) {
       reject(new Error(`Python скрипт не найден: ${scriptPath}`));
@@ -610,10 +624,13 @@ app.listen(PORT, '0.0.0.0', () => {
    📈 Записей в базе: ${records.length}
    ✅ Данные сохраняются при редеплое!
 
-🎯 Особенности v3.2.1:
+🎯 Особенности v3.3.0:
    ✅ Загрузка записей БЕЗ автоматической транскрипции
    ✅ Транскрипция по требованию через админ панель
-   ✅ Диаризация через SpeechBrain + pyannote.audio
+   ✅ ДВОЙНАЯ диаризация: стандартная + улучшенная (тембр голоса)
+   ✅ Анализ голосовых характеристик: F0, спектр, MFCC, темп речи
+   ✅ Адаптивная сегментация на основе VAD
+   ✅ Улучшенная кластеризация (Agglomerative, Spectral)
    ✅ Современный черный дизайн админки
    ✅ Массовые операции с записями
    ✅ Персистентное хранилище данных (Railway Volume)

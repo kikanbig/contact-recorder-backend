@@ -514,6 +514,10 @@
                         <option value="medium">Medium (качество)</option>
                         <option value="large">Large (максимум)</option>
                     </select>
+                    <select id="methodSelect" class="model-select">
+                        <option value="standard">🎯 Стандартная диаризация</option>
+                        <option value="enhanced">🧠 Улучшенная (тембр голоса)</option>
+                    </select>
                     <button class="btn btn-primary" onclick="loadRecords()">
                         🔄 Обновить
                     </button>
@@ -703,9 +707,16 @@
         // Получение текста статуса
         function getStatusText(record) {
             if (record.text && record.text.trim()) {
-                return 'Транскрибировано';
+                const method = record.processing_method;
+                if (method === 'enhanced' || method === 'enhanced_voice_timbre_analysis_v3.3.0') {
+                    return '🧠 Транскрибировано (улучшенная)';
+                } else if (method && method.includes('enhanced')) {
+                    return '🧠 Транскрибировано (улучшенная)';
+                } else {
+                    return '✅ Транскрибировано';
+                }
             }
-            return 'Загружено';
+            return '📤 Загружено';
         }
 
         // Переключение выбора всех записей
@@ -757,6 +768,7 @@
         // Транскрипция одной записи
         async function transcribeRecord(recordId) {
             const model = document.getElementById('modelSelect').value;
+            const method = document.getElementById('methodSelect').value;
             
             // Находим кнопку и меняем её состояние
             const button = document.querySelector(`button[onclick="transcribeRecord('${recordId}')"]`);
@@ -764,7 +776,8 @@
             
             try {
                 // Меняем состояние кнопки
-                button.innerHTML = '⏳ Транскрибируется...';
+                const methodText = method === 'enhanced' ? '🧠 Улучшенная диаризация...' : '⏳ Транскрибируется...';
+                button.innerHTML = methodText;
                 button.disabled = true;
                 button.style.opacity = '0.7';
                 
@@ -773,7 +786,10 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ model: model })
+                    body: JSON.stringify({ 
+                        model: model,
+                        method: method
+                    })
                 });
 
                 if (!response.ok) {
@@ -783,11 +799,12 @@
 
                 const result = await response.json();
                 
-                // Показываем результат
+                // Показываем результат с информацией о методе
+                const methodName = method === 'enhanced' ? 'Улучшенная (тембр голоса)' : 'Стандартная';
                 if (result.segments && result.segments.length > 0) {
-                    alert(`✅ Транскрипция завершена!\n👥 Найдено спикеров: ${result.speaker_count}\n📝 Сегментов диалога: ${result.segments.length}`);
+                    alert(`✅ Транскрипция завершена!\n🎯 Метод: ${methodName}\n👥 Найдено спикеров: ${result.speaker_count}\n📝 Сегментов диалога: ${result.segments.length}`);
                 } else {
-                    alert('✅ Транскрипция завершена успешно!');
+                    alert(`✅ Транскрипция завершена успешно!\n🎯 Метод: ${methodName}`);
                 }
                 
                 await loadRecords();
@@ -807,16 +824,20 @@
         async function transcribeSelected() {
             if (selectedRecords.size === 0) return;
             
-            if (!confirm(`Транскрибировать ${selectedRecords.size} записей?`)) {
+            const model = document.getElementById('modelSelect').value;
+            const method = document.getElementById('methodSelect').value;
+            const methodName = method === 'enhanced' ? 'улучшенной диаризацией' : 'стандартной диаризацией';
+            
+            if (!confirm(`Транскрибировать ${selectedRecords.size} записей с ${methodName}?`)) {
                 return;
             }
 
-            const model = document.getElementById('modelSelect').value;
             const button = document.querySelector('button[onclick="transcribeSelected()"]');
             const originalText = button.innerHTML;
             
             try {
-                button.innerHTML = `⏳ Транскрибируется ${selectedRecords.size} записей...`;
+                const methodIcon = method === 'enhanced' ? '🧠' : '⏳';
+                button.innerHTML = `${methodIcon} Транскрибируется ${selectedRecords.size} записей...`;
                 button.disabled = true;
                 button.style.opacity = '0.7';
                 
@@ -824,14 +845,17 @@
                 for (const recordId of selectedRecords) {
                     try {
                         completed++;
-                        button.innerHTML = `⏳ Транскрибируется ${completed}/${selectedRecords.size}...`;
+                        button.innerHTML = `${methodIcon} Транскрибируется ${completed}/${selectedRecords.size}...`;
                         
                         const response = await fetch(`/api/records/${recordId}/transcribe`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json'
                             },
-                            body: JSON.stringify({ model: model })
+                            body: JSON.stringify({ 
+                                model: model,
+                                method: method
+                            })
                         });
 
                         if (!response.ok) {
@@ -843,7 +867,8 @@
                     }
                 }
                 
-                alert(`✅ Массовая транскрипция завершена!\nОбработано записей: ${completed}`);
+                const finalMethodName = method === 'enhanced' ? 'Улучшенная (тембр голоса)' : 'Стандартная';
+                alert(`✅ Массовая транскрипция завершена!\n🎯 Метод: ${finalMethodName}\nОбработано записей: ${completed}`);
                 await loadRecords();
                 
             } finally {
