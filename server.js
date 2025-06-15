@@ -135,7 +135,7 @@ app.get('/', (req, res) => {
       <body>
         <div class="container">
           <h1>🎤 21 Век</h1>
-          <div class="subtitle">Система транскрипции аудио с диаризацией v3.3.1</div>
+          <div class="subtitle">Система транскрипции аудио с диаризацией v3.3.2</div>
           
           <div class="features">
             <div class="feature">
@@ -179,7 +179,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'OK',
     timestamp: new Date().toISOString(),
-    version: '3.3.1',
+    version: '3.3.2',
     storage: {
       type: 'Railway Volume',
       data_dir: DATA_DIR,
@@ -299,6 +299,23 @@ app.post('/api/recordings/upload', upload.single('audio'), async (req, res) => {
 app.get('/api/records', (req, res) => {
   try {
     const records = loadDatabase();
+    
+    // Диагностика: проверяем структуру данных
+    const transcribedRecords = records.filter(r => r.text);
+    if (transcribedRecords.length > 0) {
+      console.log('🔍 Диагностика записей с транскрипцией:');
+      transcribedRecords.slice(0, 2).forEach(record => {
+        console.log(`   📝 Запись ${record.id}:`, {
+          text_type: typeof record.text,
+          text_starts_with_json: record.text && record.text.startsWith('{'),
+          segments_type: typeof record.segments,
+          segments_count: record.segments ? record.segments.length : 0,
+          speaker_count: record.speaker_count,
+          processing_method: record.processing_method
+        });
+      });
+    }
+    
     res.json(records);
   } catch (error) {
     console.error('❌ Ошибка получения записей:', error);
@@ -356,11 +373,44 @@ app.post('/api/records/:id/transcribe', async (req, res) => {
     const result = await transcribeWithDiarization(record.file_path, model, method);
 
     // Обновляем запись в базе данных
-    record.text = result.text;
-    record.segments = result.segments;
-    record.speaker_count = result.speaker_count;
+    console.log('💾 Сохраняем результат в базу данных:', {
+      text_length: result.text ? result.text.length : 0,
+      segments_count: result.segments ? result.segments.length : 0,
+      speaker_count: result.speaker_count,
+      processing_method: result.processing_method || method
+    });
+    
+    // Проверяем, если result.text содержит JSON данные
+    let finalText = result.text;
+    let finalSegments = result.segments;
+    let finalSpeakerCount = result.speaker_count;
+    let finalProcessingMethod = result.processing_method || method;
+    
+    // Если text содержит JSON, парсим его
+    if (typeof result.text === 'string' && result.text.startsWith('{')) {
+      try {
+        const jsonData = JSON.parse(result.text);
+        console.log('🔍 Обнаружен JSON в поле text, парсим...');
+        finalText = jsonData.text || result.text;
+        finalSegments = jsonData.segments || result.segments;
+        finalSpeakerCount = jsonData.speaker_count || result.speaker_count;
+        finalProcessingMethod = jsonData.processing_method || result.processing_method || method;
+        console.log('✅ JSON успешно распарсен:', {
+          text_length: finalText ? finalText.length : 0,
+          segments_count: finalSegments ? finalSegments.length : 0,
+          speaker_count: finalSpeakerCount,
+          processing_method: finalProcessingMethod
+        });
+      } catch (e) {
+        console.log('⚠️ Не удалось распарсить JSON из text поля, используем как есть');
+      }
+    }
+    
+    record.text = finalText;
+    record.segments = finalSegments;
+    record.speaker_count = finalSpeakerCount;
     record.transcribed_at = new Date().toISOString();
-    record.processing_method = result.processing_method || method;
+    record.processing_method = finalProcessingMethod;
 
     saveDatabase(records);
 
@@ -369,11 +419,11 @@ app.post('/api/records/:id/transcribe', async (req, res) => {
     res.json({
       success: true,
       message: 'Транскрипция завершена успешно',
-      text: result.text,
-      segments: result.segments,
-      speaker_count: result.speaker_count,
+      text: finalText,
+      segments: finalSegments,
+      speaker_count: finalSpeakerCount,
       transcribed_at: record.transcribed_at,
-      processing_method: record.processing_method
+      processing_method: finalProcessingMethod
     });
 
   } catch (error) {
@@ -471,6 +521,26 @@ app.post('/api/records/bulk-delete', (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Ошибка массового удаления записей'
+    });
+  }
+});
+
+// API: Миграция записей с JSON данными
+app.post('/api/migrate-records', (req, res) => {
+  try {
+    console.log('🔄 Запуск ручной миграции записей...');
+    const migratedCount = migrateJsonRecords();
+    
+    res.json({
+      success: true,
+      message: `Миграция завершена. Обработано записей: ${migratedCount}`,
+      migrated_count: migratedCount
+    });
+  } catch (error) {
+    console.error('❌ Ошибка миграции:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка миграции записей: ' + error.message
     });
   }
 });
@@ -615,6 +685,11 @@ function runCommand(command, args) {
 // Запуск сервера
 app.listen(PORT, '0.0.0.0', () => {
   const records = loadDatabase();
+  
+  // Выполняем миграцию записей с JSON данными
+  console.log('🔄 Проверяем необходимость миграции записей...');
+  const migratedCount = migrateJsonRecords();
+  
   console.log(`
 🚀 Сервер запущен на порту ${PORT}
 
@@ -633,9 +708,10 @@ app.listen(PORT, '0.0.0.0', () => {
    📊 База данных: ${DB_FILE}
    📂 Загрузки: ${UPLOADS_DIR}
    📈 Записей в базе: ${records.length}
+   ${migratedCount > 0 ? `🔄 Мигрировано записей: ${migratedCount}` : ''}
    ✅ Данные сохраняются при редеплое!
 
-🎯 Особенности v3.3.1:
+🎯 Особенности v3.3.2:
    ✅ Загрузка записей БЕЗ автоматической транскрипции
    ✅ Транскрипция по требованию через админ панель
    ✅ ДВОЙНАЯ диаризация: стандартная + улучшенная (тембр голоса)
@@ -657,4 +733,40 @@ process.on('SIGTERM', () => {
 process.on('SIGINT', () => {
   console.log('🛑 Получен сигнал SIGINT, завершаем сервер...');
   process.exit(0);
-}); 
+});
+
+// Функция миграции для исправления записей с JSON в поле text
+function migrateJsonRecords() {
+  try {
+    const records = loadDatabase();
+    let migratedCount = 0;
+    
+    records.forEach(record => {
+      if (record.text && typeof record.text === 'string' && record.text.startsWith('{') && !record.segments) {
+        try {
+          const jsonData = JSON.parse(record.text);
+          if (jsonData.segments) {
+            console.log(`🔄 Мигрируем запись ${record.id} с JSON данными`);
+            record.text = jsonData.text || record.text;
+            record.segments = jsonData.segments;
+            record.speaker_count = jsonData.speaker_count || 1;
+            record.processing_method = jsonData.processing_method || 'unknown';
+            migratedCount++;
+          }
+        } catch (e) {
+          console.log(`⚠️ Не удалось мигрировать запись ${record.id}:`, e.message);
+        }
+      }
+    });
+    
+    if (migratedCount > 0) {
+      saveDatabase(records);
+      console.log(`✅ Мигрировано записей: ${migratedCount}`);
+    }
+    
+    return migratedCount;
+  } catch (error) {
+    console.error('❌ Ошибка миграции:', error);
+    return 0;
+  }
+} 
