@@ -372,6 +372,16 @@
             font-size: 15px;
         }
 
+        .voice-characteristics {
+            margin-top: 8px;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            font-size: 12px;
+            color: var(--color-accent);
+            border-left: 3px solid var(--color-accent);
+        }
+
         .loading {
             text-align: center;
             padding: 60px 20px;
@@ -892,13 +902,28 @@
             modalTitle.textContent = `📝 ${record.filename || 'Транскрипция'}`;
 
             let contentHTML = '';
+            let segments = record.segments;
+            let transcriptionText = record.text;
             
-            if (record.segments && record.segments.length > 0) {
+            // Проверяем, если данные в JSON формате в поле text
+            if (!segments && record.text && record.text.startsWith('{')) {
+                try {
+                    const jsonData = JSON.parse(record.text);
+                    if (jsonData.segments) {
+                        segments = jsonData.segments;
+                        transcriptionText = jsonData.text;
+                    }
+                } catch (e) {
+                    console.log('Не удалось распарсить JSON из text поля');
+                }
+            }
+            
+            if (segments && segments.length > 0) {
                 // Отображение с диаризацией
                 const speakerColors = {};
                 let colorIndex = 0;
                 
-                contentHTML = record.segments.map((segment, index) => {
+                contentHTML = segments.map((segment, index) => {
                     // Назначаем цвет для каждого уникального говорящего
                     if (!speakerColors[segment.speaker]) {
                         speakerColors[segment.speaker] = String.fromCharCode(97 + (colorIndex % 3));
@@ -909,6 +934,22 @@
                     const speakerName = segment.speaker.replace('SPEAKER_', 'Говорящий ');
                     const duration = segment.end - segment.start;
                     
+                    // Добавляем информацию о голосовых характеристиках для улучшенной диаризации
+                    let voiceInfo = '';
+                    if (segment.voice_characteristics && Object.keys(segment.voice_characteristics).length > 0) {
+                        const vc = segment.voice_characteristics;
+                        const confidence = segment.confidence || 1.0;
+                        voiceInfo = `
+                            <div class="voice-characteristics">
+                                🧠 Голосовые характеристики: 
+                                ${vc.f0_mean ? `F0: ${vc.f0_mean.toFixed(1)}Гц` : ''}
+                                ${vc.spectral_centroid ? `, Спектр: ${vc.spectral_centroid.toFixed(0)}Гц` : ''}
+                                ${vc.speech_rate ? `, Темп: ${vc.speech_rate.toFixed(1)}/сек` : ''}
+                                ${confidence < 1.0 ? `, Уверенность: ${(confidence * 100).toFixed(0)}%` : ''}
+                            </div>
+                        `;
+                    }
+                    
                     return `
                         <div class="speaker-segment ${speakerClass}">
                             <div class="speaker-label">
@@ -916,16 +957,33 @@
                                 <span class="timestamp">${formatTime(segment.start)} - ${formatTime(segment.end)} (${duration.toFixed(1)}с)</span>
                             </div>
                             <div class="segment-text">${segment.text}</div>
+                            ${voiceInfo}
                         </div>
                     `;
                 }).join('');
                 
                 // Добавляем статистику диалога
-                const speakers = [...new Set(record.segments.map(s => s.speaker))];
+                const speakers = [...new Set(segments.map(s => s.speaker))];
                 const stats = speakers.map(speaker => {
-                    const speakerSegments = record.segments.filter(s => s.speaker === speaker);
+                    const speakerSegments = segments.filter(s => s.speaker === speaker);
                     const totalDuration = speakerSegments.reduce((sum, s) => sum + (s.end - s.start), 0);
                     const wordCount = speakerSegments.reduce((sum, s) => sum + s.text.split(' ').length, 0);
+                    
+                    // Средние голосовые характеристики для говорящего
+                    const voiceChars = speakerSegments
+                        .filter(s => s.voice_characteristics && Object.keys(s.voice_characteristics).length > 0)
+                        .map(s => s.voice_characteristics);
+                    
+                    let voiceStatsText = '';
+                    if (voiceChars.length > 0) {
+                        const avgF0 = voiceChars.reduce((sum, vc) => sum + (vc.f0_mean || 0), 0) / voiceChars.length;
+                        const avgSpectral = voiceChars.reduce((sum, vc) => sum + (vc.spectral_centroid || 0), 0) / voiceChars.length;
+                        const avgRate = voiceChars.reduce((sum, vc) => sum + (vc.speech_rate || 0), 0) / voiceChars.length;
+                        
+                        voiceStatsText = `<br><small style="color: var(--color-accent);">
+                            🧠 Средние характеристики: F0: ${avgF0.toFixed(1)}Гц, Спектр: ${avgSpectral.toFixed(0)}Гц, Темп: ${avgRate.toFixed(1)}/сек
+                        </small>`;
+                    }
                     
                     return `
                         <div class="speaker-stats">
@@ -933,13 +991,23 @@
                             ${speakerSegments.length} сегментов, 
                             ${totalDuration.toFixed(1)}с речи, 
                             ~${wordCount} слов
+                            ${voiceStatsText}
                         </div>
                     `;
                 }).join('');
                 
+                // Определяем метод обработки
+                const processingMethod = record.processing_method || 'unknown';
+                const isEnhanced = processingMethod.includes('enhanced');
+                const methodIcon = isEnhanced ? '🧠' : '🎯';
+                const methodName = isEnhanced ? 'Улучшенная диаризация (тембр голоса)' : 'Стандартная диаризация';
+                
                 contentHTML = `
                     <div class="dialog-stats">
                         <h4>📊 Статистика диалога:</h4>
+                        <div style="margin-bottom: 10px; color: var(--color-accent);">
+                            ${methodIcon} Метод обработки: ${methodName}
+                        </div>
                         ${stats}
                         <hr style="margin: 15px 0; border: 1px solid var(--color-border);">
                     </div>
@@ -949,7 +1017,7 @@
                 // Простой текст без диаризации
                 contentHTML = `<div class="speaker-segment speaker-a">
                     <div class="speaker-label">📝 Транскрипция (без диаризации)</div>
-                    <div>${record.text || 'Нет текста'}</div>
+                    <div>${transcriptionText || record.text || 'Нет текста'}</div>
                 </div>`;
             }
 

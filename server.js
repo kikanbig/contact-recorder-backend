@@ -135,7 +135,7 @@ app.get('/', (req, res) => {
       <body>
         <div class="container">
           <h1>🎤 21 Век</h1>
-          <div class="subtitle">Система транскрипции аудио с диаризацией v3.3.0</div>
+          <div class="subtitle">Система транскрипции аудио с диаризацией v3.3.1</div>
           
           <div class="features">
             <div class="feature">
@@ -179,7 +179,7 @@ app.get('/health', async (req, res) => {
   const health = {
     status: 'OK',
     timestamp: new Date().toISOString(),
-    version: '3.3.0',
+    version: '3.3.1',
     storage: {
       type: 'Railway Volume',
       data_dir: DATA_DIR,
@@ -547,19 +547,30 @@ async function transcribeWithDiarization(audioFilePath, model = 'small', method 
         const lines = stdout.trim().split('\n');
         const lastLine = lines[lines.length - 1];
         
+        console.log('🔍 Последняя строка вывода:', lastLine);
+        
         if (lastLine.startsWith('{')) {
           const result = JSON.parse(lastLine);
+          console.log('✅ Успешно распарсен JSON результат:', {
+            text_length: result.text ? result.text.length : 0,
+            segments_count: result.segments ? result.segments.length : 0,
+            speaker_count: result.speaker_count,
+            processing_method: result.processing_method
+          });
           resolve(result);
         } else {
           // Fallback для простого текста
+          console.log('⚠️ Результат не в JSON формате, используем fallback');
           resolve({
             text: stdout.trim(),
             segments: [],
-            speaker_count: 1
+            speaker_count: 1,
+            processing_method: method
           });
         }
       } catch (parseError) {
         console.error('❌ Ошибка парсинга результата:', parseError);
+        console.error('❌ Проблемная строка:', lastLine);
         reject(new Error('Ошибка парсинга результата транскрипции'));
       }
     });
@@ -624,7 +635,7 @@ app.listen(PORT, '0.0.0.0', () => {
    📈 Записей в базе: ${records.length}
    ✅ Данные сохраняются при редеплое!
 
-🎯 Особенности v3.3.0:
+🎯 Особенности v3.3.1:
    ✅ Загрузка записей БЕЗ автоматической транскрипции
    ✅ Транскрипция по требованию через админ панель
    ✅ ДВОЙНАЯ диаризация: стандартная + улучшенная (тембр голоса)
