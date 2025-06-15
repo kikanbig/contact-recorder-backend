@@ -229,6 +229,102 @@ class EnhancedVoiceAnalyzer:
                 segments.append((start, end))
             return segments
 
+    def fine_grained_voice_analysis(self, waveform: np.ndarray) -> List[Dict]:
+        """Детальный анализ голосовых характеристик с высокой частотой"""
+        import librosa
+        
+        print("🔬 Детальный анализ голосовых характеристик (каждые 200ms)...", file=sys.stderr)
+        
+        # Анализируем каждые 200ms с перекрытием 100ms
+        window_size = 0.2  # 200ms
+        hop_size = 0.1     # 100ms (50% перекрытие)
+        
+        duration = len(waveform) / self.sample_rate
+        voice_analysis = []
+        
+        for start_time in np.arange(0, duration - window_size + 0.01, hop_size):
+            end_time = min(start_time + window_size, duration)
+            
+            start_sample = int(start_time * self.sample_rate)
+            end_sample = int(end_time * self.sample_rate)
+            segment_waveform = waveform[start_sample:end_sample]
+            
+            if len(segment_waveform) < self.sample_rate * 0.1:  # Минимум 100ms
+                continue
+                
+            try:
+                # Быстрый анализ ключевых характеристик
+                features = self.extract_compact_voice_features(segment_waveform, start_time, end_time)
+                if features is not None:
+                    voice_analysis.append(features)
+            except Exception as e:
+                continue
+        
+        print(f"✅ Проанализировано микро-сегментов: {len(voice_analysis)}", file=sys.stderr)
+        return voice_analysis
+    
+    def extract_compact_voice_features(self, waveform: np.ndarray, start_time: float, end_time: float) -> Dict:
+        """Быстрое извлечение ключевых голосовых характеристик"""
+        import librosa
+        
+        try:
+            # 1. SpeechBrain эмбеддинг (основа)
+            waveform_tensor = torch.tensor(waveform).unsqueeze(0)
+            with torch.no_grad():
+                speaker_embedding = self.verification_model.encode_batch(waveform_tensor).squeeze().numpy()
+            
+            # 2. F0 (основная частота) - ключевая характеристика тембра
+            f0, voiced_flag, voiced_probs = librosa.pyin(
+                waveform, 
+                fmin=librosa.note_to_hz('C2'), 
+                fmax=librosa.note_to_hz('C7'),
+                sr=self.sample_rate
+            )
+            
+            # Фильтруем только уверенные F0 значения
+            confident_f0 = f0[voiced_probs > 0.7]
+            if len(confident_f0) > 0:
+                f0_mean = np.nanmean(confident_f0)
+                f0_std = np.nanstd(confident_f0)
+                f0_range = np.nanmax(confident_f0) - np.nanmin(confident_f0)
+            else:
+                f0_mean = f0_std = f0_range = 0
+            
+            # 3. Спектральный центроид (яркость голоса)
+            spectral_centroid = librosa.feature.spectral_centroid(y=waveform, sr=self.sample_rate)[0]
+            centroid_mean = np.mean(spectral_centroid)
+            
+            # 4. Формантные характеристики (упрощенные)
+            mfcc = librosa.feature.mfcc(y=waveform, sr=self.sample_rate, n_mfcc=5)  # Только первые 5
+            mfcc_mean = np.mean(mfcc, axis=1)
+            
+            # 5. Энергия и динамика
+            rms_energy = librosa.feature.rms(y=waveform)[0]
+            energy_mean = np.mean(rms_energy)
+            
+            # Компактный вектор признаков (202 измерения)
+            compact_features = np.concatenate([
+                speaker_embedding,  # 192 измерения
+                [f0_mean, f0_std, f0_range],  # 3 измерения F0
+                [centroid_mean],  # 1 измерение спектра
+                mfcc_mean,  # 5 измерений MFCC
+                [energy_mean]  # 1 измерение энергии
+            ])
+            
+            return {
+                'features': compact_features,
+                'start_time': start_time,
+                'end_time': end_time,
+                'f0_mean': f0_mean,
+                'f0_std': f0_std,
+                'spectral_centroid': centroid_mean,
+                'energy': energy_mean,
+                'confidence': np.mean(voiced_probs) if len(voiced_probs) > 0 else 0
+            }
+            
+        except Exception as e:
+            return None
+
 def enhanced_clustering(features_list: List[np.ndarray], num_speakers: Optional[int] = None) -> np.ndarray:
     """Улучшенная кластеризация с несколькими алгоритмами"""
     from sklearn.cluster import AgglomerativeClustering, DBSCAN, SpectralClustering
@@ -595,6 +691,234 @@ def calculate_voice_similarity(char1, char2):
     
     return np.mean(similarities) if similarities else 0.5
 
+def timbre_focused_diarization(audio_path, num_speakers=None):
+    """Диаризация с акцентом на тембр голоса, а не на время"""
+    print(f"🎵 ТЕМБР-ОРИЕНТИРОВАННАЯ диаризация (Timbre-First Analysis)...", file=sys.stderr)
+    
+    try:
+        import torchaudio
+        from sklearn.cluster import DBSCAN
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.metrics import silhouette_score
+        
+        # Инициализируем анализатор
+        analyzer = EnhancedVoiceAnalyzer()
+        analyzer.load_models()
+        
+        # Загружаем аудио
+        waveform, sample_rate = torchaudio.load(audio_path)
+        
+        # Конвертируем в моно
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0)
+        
+        # Ресемплируем если нужно
+        if sample_rate != analyzer.sample_rate:
+            resampler = torchaudio.transforms.Resample(sample_rate, analyzer.sample_rate)
+            waveform = resampler(waveform)
+        
+        waveform_np = waveform.numpy()
+        
+        # КЛЮЧЕВОЕ ОТЛИЧИЕ: детальный анализ каждые 200ms
+        voice_analysis = analyzer.fine_grained_voice_analysis(waveform_np)
+        
+        if len(voice_analysis) == 0:
+            print("❌ Не удалось извлечь голосовые характеристики", file=sys.stderr)
+            return None
+        
+        print(f"🔬 Анализируем {len(voice_analysis)} микро-сегментов...", file=sys.stderr)
+        
+        # Извлекаем только высококачественные сегменты
+        high_quality_segments = [
+            seg for seg in voice_analysis 
+            if seg['confidence'] > 0.5 and not np.isnan(seg['f0_mean']) and seg['f0_mean'] > 0
+        ]
+        
+        print(f"✅ Высококачественных сегментов: {len(high_quality_segments)}", file=sys.stderr)
+        
+        if len(high_quality_segments) < 10:
+            print("⚠️ Слишком мало качественных сегментов, используем все", file=sys.stderr)
+            high_quality_segments = voice_analysis
+        
+        # Кластеризация на основе ТЕМБРА, а не времени
+        features_array = np.array([seg['features'] for seg in high_quality_segments])
+        
+        # Нормализация с акцентом на голосовые характеристики
+        scaler = StandardScaler()
+        features_normalized = scaler.fit_transform(features_array)
+        
+        # Используем DBSCAN для автоматического определения количества кластеров
+        # на основе плотности голосовых характеристик
+        best_labels = None
+        best_score = -1
+        best_eps = None
+        
+        # Пробуем разные параметры DBSCAN
+        eps_values = np.arange(0.3, 2.0, 0.1)
+        min_samples_values = [3, 5, 7]
+        
+        for eps in eps_values:
+            for min_samples in min_samples_values:
+                try:
+                    clustering = DBSCAN(eps=eps, min_samples=min_samples)
+                    labels = clustering.fit_predict(features_normalized)
+                    
+                    # Исключаем шум (-1)
+                    unique_labels = set(labels)
+                    if -1 in unique_labels:
+                        unique_labels.remove(-1)
+                    
+                    if len(unique_labels) >= 2 and len(unique_labels) <= 8:
+                        # Вычисляем silhouette score только для не-шумовых точек
+                        non_noise_mask = labels != -1
+                        if np.sum(non_noise_mask) > 1:
+                            score = silhouette_score(
+                                features_normalized[non_noise_mask], 
+                                labels[non_noise_mask]
+                            )
+                            
+                            print(f"   🎯 DBSCAN eps={eps:.1f}, min_samples={min_samples}: "
+                                  f"{len(unique_labels)} кластеров, score={score:.3f}", file=sys.stderr)
+                            
+                            if score > best_score:
+                                best_score = score
+                                best_labels = labels
+                                best_eps = eps
+                                
+                except Exception as e:
+                    continue
+        
+        # Fallback если DBSCAN не сработал
+        if best_labels is None:
+            print("⚠️ DBSCAN не сработал, используем Agglomerative", file=sys.stderr)
+            from sklearn.cluster import AgglomerativeClustering
+            n_clusters = num_speakers if num_speakers else min(4, len(high_quality_segments) // 5)
+            clustering = AgglomerativeClustering(n_clusters=n_clusters, linkage='ward')
+            best_labels = clustering.fit_predict(features_normalized)
+            best_eps = "fallback"
+        
+        # Обрабатываем шумовые точки (если есть)
+        noise_points = np.sum(best_labels == -1)
+        if noise_points > 0:
+            print(f"⚠️ Найдено {noise_points} шумовых точек, переназначаем к ближайшим кластерам", file=sys.stderr)
+            # Переназначаем шумовые точки к ближайшим кластерам
+            from sklearn.neighbors import NearestNeighbors
+            
+            non_noise_mask = best_labels != -1
+            if np.sum(non_noise_mask) > 0:
+                nn = NearestNeighbors(n_neighbors=1)
+                nn.fit(features_normalized[non_noise_mask])
+                
+                noise_mask = best_labels == -1
+                if np.sum(noise_mask) > 0:
+                    distances, indices = nn.kneighbors(features_normalized[noise_mask])
+                    best_labels[noise_mask] = best_labels[non_noise_mask][indices.flatten()]
+        
+        unique_speakers = len(set(best_labels))
+        print(f"✅ Тембр-ориентированная кластеризация завершена", file=sys.stderr)
+        print(f"   🎵 Найдено говорящих: {unique_speakers}", file=sys.stderr)
+        print(f"   🎯 Лучший параметр: eps={best_eps}, score={best_score:.3f}", file=sys.stderr)
+        
+        # Создаем результат диаризации
+        diarization_segments = []
+        speakers = set()
+        
+        for i, segment in enumerate(high_quality_segments):
+            speaker_id = f"SPEAKER_{best_labels[i]:02d}"
+            diarization_segments.append({
+                'start': segment['start_time'],
+                'end': segment['end_time'],
+                'speaker': speaker_id,
+                'voice_characteristics': {
+                    'f0_mean': float(segment['f0_mean']) if not np.isnan(segment['f0_mean']) else 0,
+                    'f0_std': float(segment['f0_std']) if not np.isnan(segment['f0_std']) else 0,
+                    'spectral_centroid': float(segment['spectral_centroid']),
+                    'energy': float(segment['energy']),
+                    'confidence': float(segment['confidence'])
+                }
+            })
+            speakers.add(speaker_id)
+        
+        # Объединяем близкие по времени сегменты одного говорящего
+        merged_segments = merge_timbre_segments(diarization_segments)
+        
+        print(f"✅ Тембр-ориентированная диаризация завершена", file=sys.stderr)
+        print(f"   👥 Финальных говорящих: {len(speakers)}", file=sys.stderr)
+        print(f"   🎯 Финальных сегментов: {len(merged_segments)}", file=sys.stderr)
+        
+        return {
+            'segments': merged_segments,
+            'speakers': list(speakers),
+            'speaker_count': len(speakers),
+            'method': 'timbre_focused_analysis',
+            'analysis_frequency': '200ms',
+            'quality_threshold': 0.5
+        }
+        
+    except Exception as e:
+        print(f"❌ Ошибка тембр-ориентированной диаризации: {e}", file=sys.stderr)
+        print(f"❌ Traceback: {traceback.format_exc()}", file=sys.stderr)
+        return None
+
+def merge_timbre_segments(segments):
+    """Объединение сегментов на основе тембра и близости по времени"""
+    if not segments:
+        return []
+    
+    # Сортируем по времени
+    sorted_segments = sorted(segments, key=lambda x: x['start'])
+    merged = []
+    current_group = []
+    
+    for segment in sorted_segments:
+        if not current_group:
+            current_group = [segment]
+        else:
+            last_segment = current_group[-1]
+            
+            # Проверяем: тот же говорящий И близко по времени (до 0.5 сек)
+            same_speaker = last_segment['speaker'] == segment['speaker']
+            close_in_time = (segment['start'] - last_segment['end']) <= 0.5
+            
+            if same_speaker and close_in_time:
+                current_group.append(segment)
+            else:
+                # Завершаем текущую группу
+                if current_group:
+                    merged_segment = merge_segment_group(current_group)
+                    merged.append(merged_segment)
+                current_group = [segment]
+    
+    # Добавляем последнюю группу
+    if current_group:
+        merged_segment = merge_segment_group(current_group)
+        merged.append(merged_segment)
+    
+    return merged
+
+def merge_segment_group(segment_group):
+    """Объединяет группу сегментов в один"""
+    if len(segment_group) == 1:
+        return segment_group[0]
+    
+    # Берем временные границы
+    start_time = segment_group[0]['start']
+    end_time = segment_group[-1]['end']
+    speaker = segment_group[0]['speaker']
+    
+    # Усредняем голосовые характеристики
+    characteristics = {}
+    for key in segment_group[0]['voice_characteristics']:
+        values = [seg['voice_characteristics'][key] for seg in segment_group]
+        characteristics[key] = np.mean(values)
+    
+    return {
+        'start': start_time,
+        'end': end_time,
+        'speaker': speaker,
+        'voice_characteristics': characteristics
+    }
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({
@@ -636,9 +960,15 @@ def main():
         if not whisper_result:
             raise Exception("Ошибка транскрипции")
         
-        # Улучшенная диаризация
-        print("👥 Этап 2: Улучшенная диаризация...", file=sys.stderr)
-        diarization_result = enhanced_diarization(audio_file, num_speakers)
+        # Улучшенная диаризация (по умолчанию enhanced, можно переключить на timbre)
+        method = os.environ.get('DIARIZATION_METHOD', 'enhanced')
+        if method == 'timbre':
+            print("🎵 Этап 2: Тембр-ориентированная диаризация...", file=sys.stderr)
+            diarization_result = timbre_focused_diarization(audio_file, num_speakers)
+        else:
+            print("🧠 Этап 2: Улучшенная диаризация...", file=sys.stderr)
+            diarization_result = enhanced_diarization(audio_file, num_speakers)
+        
         if not diarization_result:
             raise Exception("Ошибка диаризации")
         

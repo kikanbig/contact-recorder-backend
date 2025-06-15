@@ -549,9 +549,17 @@ app.post('/api/migrate-records', (req, res) => {
 async function transcribeWithDiarization(audioFilePath, model = 'small', method = 'standard') {
   return new Promise((resolve, reject) => {
     // Выбираем скрипт в зависимости от метода
-    const scriptName = method === 'enhanced' 
-      ? 'transcription_service_enhanced.py'
-      : 'transcription_service_speechbrain.py';
+    let scriptName, env = { ...process.env, PYTHONUNBUFFERED: '1' };
+    
+    if (method === 'enhanced') {
+        scriptName = 'transcription_service_enhanced.py';
+        env.DIARIZATION_METHOD = 'enhanced';
+    } else if (method === 'timbre') {
+        scriptName = 'transcription_service_enhanced.py';
+        env.DIARIZATION_METHOD = 'timbre';
+    } else {
+        scriptName = 'transcription_service_speechbrain.py';
+    }
     
     const scriptPath = path.join(__dirname, scriptName);
     
@@ -577,7 +585,7 @@ async function transcribeWithDiarization(audioFilePath, model = 'small', method 
       model
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PYTHONUNBUFFERED: '1' }
+      env: env
     });
 
     let stdout = '';
@@ -711,11 +719,13 @@ app.listen(PORT, '0.0.0.0', () => {
    ${migratedCount > 0 ? `🔄 Мигрировано записей: ${migratedCount}` : ''}
    ✅ Данные сохраняются при редеплое!
 
-🎯 Особенности v3.3.2:
+   🎯 Особенности v3.4.0:
    ✅ Загрузка записей БЕЗ автоматической транскрипции
    ✅ Транскрипция по требованию через админ панель
-   ✅ ДВОЙНАЯ диаризация: стандартная + улучшенная (тембр голоса)
+   ✅ ТРОЙНАЯ диаризация: стандартная + улучшенная + тембр-ориентированная (200ms)
    ✅ Анализ голосовых характеристик: F0, спектр, MFCC, темп речи
+   ✅ Высокочастотный анализ тембра каждые 200ms (вместо 1-3 сек)
+   ✅ DBSCAN кластеризация на основе плотности голосовых характеристик
    ✅ Адаптивная сегментация на основе VAD
    ✅ Улучшенная кластеризация (Agglomerative, Spectral)
    ✅ Современный черный дизайн админки

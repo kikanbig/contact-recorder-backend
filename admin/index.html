@@ -526,7 +526,8 @@
                     </select>
                     <select id="methodSelect" class="model-select">
                         <option value="standard">🎯 Стандартная диаризация</option>
-                        <option value="enhanced">🧠 Улучшенная (тембр голоса)</option>
+                        <option value="enhanced">🧠 Улучшенная диаризация</option>
+                        <option value="timbre">🎵 Тембр-ориентированная (200ms)</option>
                     </select>
                     <button class="btn btn-primary" onclick="loadRecords()">
                         🔄 Обновить
@@ -718,7 +719,9 @@
         function getStatusText(record) {
             if (record.text && record.text.trim()) {
                 const method = record.processing_method;
-                if (method === 'enhanced' || method === 'enhanced_voice_timbre_analysis_v3.3.0') {
+                if (method === 'timbre_focused_analysis') {
+                    return '🎵 Транскрибировано (тембр 200ms)';
+                } else if (method === 'enhanced' || method === 'enhanced_voice_timbre_analysis_v3.3.0') {
                     return '🧠 Транскрибировано (улучшенная)';
                 } else if (method && method.includes('enhanced')) {
                     return '🧠 Транскрибировано (улучшенная)';
@@ -786,7 +789,14 @@
             
             try {
                 // Меняем состояние кнопки
-                const methodText = method === 'enhanced' ? '🧠 Улучшенная диаризация...' : '⏳ Транскрибируется...';
+                let methodText;
+                if (method === 'enhanced') {
+                    methodText = '🧠 Улучшенная диаризация...';
+                } else if (method === 'timbre') {
+                    methodText = '🎵 Тембр-анализ (200ms)...';
+                } else {
+                    methodText = '⏳ Транскрибируется...';
+                }
                 button.innerHTML = methodText;
                 button.disabled = true;
                 button.style.opacity = '0.7';
@@ -810,7 +820,14 @@
                 const result = await response.json();
                 
                 // Показываем результат с информацией о методе
-                const methodName = method === 'enhanced' ? 'Улучшенная (тембр голоса)' : 'Стандартная';
+                let methodName;
+                if (method === 'enhanced') {
+                    methodName = 'Улучшенная диаризация';
+                } else if (method === 'timbre') {
+                    methodName = 'Тембр-ориентированная (200ms)';
+                } else {
+                    methodName = 'Стандартная';
+                }
                 if (result.segments && result.segments.length > 0) {
                     alert(`✅ Транскрипция завершена!\n🎯 Метод: ${methodName}\n👥 Найдено спикеров: ${result.speaker_count}\n📝 Сегментов диалога: ${result.segments.length}`);
                 } else {
@@ -836,7 +853,14 @@
             
             const model = document.getElementById('modelSelect').value;
             const method = document.getElementById('methodSelect').value;
-            const methodName = method === 'enhanced' ? 'улучшенной диаризацией' : 'стандартной диаризацией';
+            let methodName;
+            if (method === 'enhanced') {
+                methodName = 'улучшенной диаризацией';
+            } else if (method === 'timbre') {
+                methodName = 'тембр-ориентированной диаризацией (200ms)';
+            } else {
+                methodName = 'стандартной диаризацией';
+            }
             
             if (!confirm(`Транскрибировать ${selectedRecords.size} записей с ${methodName}?`)) {
                 return;
@@ -846,7 +870,14 @@
             const originalText = button.innerHTML;
             
             try {
-                const methodIcon = method === 'enhanced' ? '🧠' : '⏳';
+                let methodIcon;
+                if (method === 'enhanced') {
+                    methodIcon = '🧠';
+                } else if (method === 'timbre') {
+                    methodIcon = '🎵';
+                } else {
+                    methodIcon = '⏳';
+                }
                 button.innerHTML = `${methodIcon} Транскрибируется ${selectedRecords.size} записей...`;
                 button.disabled = true;
                 button.style.opacity = '0.7';
@@ -877,7 +908,14 @@
                     }
                 }
                 
-                const finalMethodName = method === 'enhanced' ? 'Улучшенная (тембр голоса)' : 'Стандартная';
+                let finalMethodName;
+                if (method === 'enhanced') {
+                    finalMethodName = 'Улучшенная диаризация';
+                } else if (method === 'timbre') {
+                    finalMethodName = 'Тембр-ориентированная (200ms)';
+                } else {
+                    finalMethodName = 'Стандартная';
+                }
                 alert(`✅ Массовая транскрипция завершена!\n🎯 Метод: ${finalMethodName}\nОбработано записей: ${completed}`);
                 await loadRecords();
                 
@@ -998,9 +1036,17 @@
                 
                 // Определяем метод обработки
                 const processingMethod = record.processing_method || 'unknown';
-                const isEnhanced = processingMethod.includes('enhanced');
-                const methodIcon = isEnhanced ? '🧠' : '🎯';
-                const methodName = isEnhanced ? 'Улучшенная диаризация (тембр голоса)' : 'Стандартная диаризация';
+                            let methodIcon, methodName;
+            if (processingMethod === 'timbre_focused_analysis') {
+                methodIcon = '🎵';
+                methodName = 'Тембр-ориентированная диаризация (200ms)';
+            } else if (processingMethod.includes('enhanced')) {
+                methodIcon = '🧠';
+                methodName = 'Улучшенная диаризация';
+            } else {
+                methodIcon = '🎯';
+                methodName = 'Стандартная диаризация';
+            }
                 
                 contentHTML = `
                     <div class="dialog-stats">
