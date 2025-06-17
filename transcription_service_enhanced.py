@@ -266,6 +266,7 @@ class EnhancedVoiceAnalyzer:
     def extract_compact_voice_features(self, waveform: np.ndarray, start_time: float, end_time: float) -> Dict:
         """Быстрое извлечение ключевых голосовых характеристик"""
         import librosa
+        import torch
         
         try:
             # 1. SpeechBrain эмбеддинг (основа)
@@ -323,6 +324,7 @@ class EnhancedVoiceAnalyzer:
             }
             
         except Exception as e:
+            print(f"⚠️ Ошибка извлечения компактных признаков: {e}", file=sys.stderr)
             return None
 
 def enhanced_clustering(features_list: List[np.ndarray], num_speakers: Optional[int] = None) -> np.ndarray:
@@ -446,24 +448,32 @@ def enhanced_diarization(audio_path, num_speakers=None):
         import torchaudio
         
         # Инициализируем анализатор
+        print("🔧 Инициализируем анализатор...", file=sys.stderr)
         analyzer = EnhancedVoiceAnalyzer()
+        
+        print("📥 Загружаем модели...", file=sys.stderr)
         analyzer.load_models()
         
         # Загружаем аудио
+        print(f"🎵 Загружаем аудио: {audio_path}", file=sys.stderr)
         waveform, sample_rate = torchaudio.load(audio_path)
         
         # Конвертируем в моно
         if waveform.shape[0] > 1:
+            print("🔄 Конвертируем в моно...", file=sys.stderr)
             waveform = waveform.mean(dim=0)
         
         # Ресемплируем если нужно
         if sample_rate != analyzer.sample_rate:
+            print(f"🔄 Ресемплируем с {sample_rate} до {analyzer.sample_rate}...", file=sys.stderr)
             resampler = torchaudio.transforms.Resample(sample_rate, analyzer.sample_rate)
             waveform = resampler(waveform)
         
         waveform_np = waveform.numpy()
+        print(f"✅ Аудио подготовлено: {len(waveform_np)} сэмплов, {len(waveform_np)/analyzer.sample_rate:.2f} сек", file=sys.stderr)
         
         # Адаптивная сегментация
+        print("🎯 Начинаем адаптивную сегментацию...", file=sys.stderr)
         segments = analyzer.adaptive_segmentation(waveform_np)
         
         # Извлекаем расширенные голосовые характеристики
@@ -471,7 +481,8 @@ def enhanced_diarization(audio_path, num_speakers=None):
         voice_features = []
         valid_segments = []
         
-        for start_time, end_time in segments:
+        for i, (start_time, end_time) in enumerate(segments):
+            print(f"   📊 Обрабатываем сегмент {i+1}/{len(segments)}: {start_time:.2f}-{end_time:.2f}с", file=sys.stderr)
             start_sample = int(start_time * analyzer.sample_rate)
             end_sample = int(end_time * analyzer.sample_rate)
             segment_waveform = waveform_np[start_sample:end_sample]
@@ -489,6 +500,8 @@ def enhanced_diarization(audio_path, num_speakers=None):
                     })
                 except Exception as e:
                     print(f"⚠️ Ошибка анализа сегмента {start_time:.2f}-{end_time:.2f}: {e}", file=sys.stderr)
+                    import traceback
+                    print(f"⚠️ Traceback: {traceback.format_exc()}", file=sys.stderr)
                     continue
         
         if len(voice_features) == 0:
@@ -498,6 +511,7 @@ def enhanced_diarization(audio_path, num_speakers=None):
         print(f"✅ Извлечено характеристик: {len(voice_features)}", file=sys.stderr)
         
         # Улучшенная кластеризация
+        print("🎯 Начинаем улучшенную кластеризацию...", file=sys.stderr)
         labels = enhanced_clustering(voice_features, num_speakers)
         
         # Создаем результат диаризации
@@ -519,6 +533,7 @@ def enhanced_diarization(audio_path, num_speakers=None):
             speakers.add(speaker_id)
         
         # Объединяем соседние сегменты одного говорящего
+        print("🔗 Объединяем соседние сегменты...", file=sys.stderr)
         merged_segments = merge_adjacent_segments(diarization_segments)
         
         print(f"✅ Улучшенная диаризация завершена", file=sys.stderr)
@@ -534,7 +549,8 @@ def enhanced_diarization(audio_path, num_speakers=None):
         
     except Exception as e:
         print(f"❌ Ошибка улучшенной диаризации: {e}", file=sys.stderr)
-        print(f"❌ Traceback: {traceback.format_exc()}", file=sys.stderr)
+        import traceback
+        print(f"❌ Полный traceback: {traceback.format_exc()}", file=sys.stderr)
         return None
 
 def merge_adjacent_segments(segments):
